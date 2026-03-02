@@ -5,6 +5,7 @@ const http = require('http');
 const https = require('https');
 const url = require('url');
 const pino = require('pino');
+const fs = require('fs'); // <--- AGREGADO PARA LEER EL TXT
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const cobranza = require('./cobranza');
 
@@ -13,12 +14,12 @@ const apiKey = process.env.GEMINI_API_KEY;
 const genAI = new GoogleGenerativeAI(apiKey);
 
 // Configuración del modelo:
-const model = genAI.getGenerativeModel({ 
-    model: "gemini-2.5-flash", 
-    generationConfig: { 
-        temperature: 0.7, 
-        maxOutputTokens: 1000 
-    }
+const model = genAI.getGenerativeModel({
+     model: "gemini-2.5-flash",
+     generationConfig: {
+         temperature: 0.7,
+         maxOutputTokens: 1000
+     }
 });
 
 let qrCodeData = "";
@@ -43,67 +44,41 @@ function obtenerTasa(apiUrl) {
     });
 }
 
-// --- GENERADOR DE PROMPT DINÁMICO ---
+// --- GENERADOR DE PROMPT DINÁMICO DESDE ARCHIVO EXTERNO ---
 async function construirInstrucciones() {
-    const tasaOficial = await obtenerTasa('https://ve.dolarapi.com/v1/dolares/oficial');
-    const tasaParalelo = await obtenerTasa('https://ve.dolarapi.com/v1/dolares/paralelo');
+    try {
+        const tasaOficial = await obtenerTasa('https://ve.dolarapi.com/v1/dolares/oficial');
+        const tasaParalelo = await obtenerTasa('https://ve.dolarapi.com/v1/dolares/paralelo');
 
-    const txtOficial = tasaOficial ? `Bs. ${tasaOficial}` : "No disponible";
-    const txtParalelo = tasaParalelo ? `Bs. ${tasaParalelo}` : "No disponible";
-    const fecha = new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' });
+        const txtOficial = tasaOficial ? `Bs. ${tasaOficial}` : "No disponible";
+        const txtParalelo = tasaParalelo ? `Bs. ${tasaParalelo}` : "No disponible";
+        const fecha = new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' });
 
-    return `
-    ROL: Eres ONE4-Bot, el asistente experto de ONE4CARS, empresa importadora de autopartes desde China a Venezuela.
-    FECHA Y HORA ACTUAL: ${fecha}
+        // LEER EL ARCHIVO TXT
+        let plantilla = fs.readFileSync('./instrucciones.txt', 'utf8');
 
-    --- DATOS ECONÓMICOS EN TIEMPO REAL (INFORMATIVO) ---
-    Dólar Oficial (BCV): ${txtOficial}
-    Dólar Paralelo: ${txtParalelo}
-    (Si el cliente pregunta por el precio del dólar, informa estos valores con exactitud).
+        // REEMPLAZAR LAS VARIABLES DENTRO DEL TEXTO
+        let instruccionesFinales = plantilla
+            .replace('{{fecha}}', fecha)
+            .replace('{{txtOficial}}', txtOficial)
+            .replace('{{txtParalelo}}', txtParalelo);
 
-    --- 1. IDENTIDAD Y TONO (PERSONALIDAD VENEZOLANA) ---
-    - Tu tono es profesional, servicial y genuinamente venezolano.
-    - Bienvenida Dinámica: En el primer contacto, genera saludos aleatorios y cordiales. Interésate por el bienestar del cliente.
-      Ejemplos: "¿Cómo está todo, estimado? Espero que tenga un excelente día." o "¡Buen día! Un gusto saludarle, ¿cómo va la jornada por allá?".
-    - Lenguaje: Usa términos como "Estimado cliente", "A su orden", "Estamos a su disposición", "Un gusto".
-
-    --- 2. DETECCIÓN DE INTENCIONES Y ENLACES OFICIALES ---
-    Si detectas estas intenciones, responde humanamente y entrega EL ENLACE EXACTO:
-    1. Medios de pago -> https://www.one4cars.com/medios_de_pago.php/
-    2. Estado de cuenta -> https://www.one4cars.com/estado_de_cuenta.php/
-    3. Lista de precios -> https://www.one4cars.com/lista_de_precios.php/
-    4. Tomar pedido -> https://www.one4cars.com/tomar_pedido.php/
-    5. Mis clientes/Vendedores -> https://www.one4cars.com/mis_clientes.php/
-    6. Afiliar cliente -> https://www.one4cars.com/afiliar_clientes.php/
-    7. Consulta de productos -> https://www.one4cars.com/consulta_productos.php/
-    8. Seguimiento Despacho -> https://www.one4cars.com/despacho.php/
-    9. Asesor Humano -> Indica que un operador revisará el caso pronto.
-
-    --- 3. PAUTAS DE EXPERTO EN PRODUCTOS ONE4CARS ---
-    - Validación de Identidad: Antes de dar información privada (saldos, stock detallado, precios), solicita el RIF o Cédula registrado.
-    - Consultas de Stock: Si preguntan por un repuesto genérico (ej. "tienes bujías"), ACTÚA COMO EXPERTO y pregunta: Marca, Modelo y Año del vehículo.
-    - Conocimiento Técnico: Explica la importancia de los repuestos usando tu base de conocimiento, pero siempre referenciando la marca ONE4CARS.
-    - Almacenes: Almacén General = Bultos cerrados de China. Almacén Intermedio = Despacho inmediato al detal.
-
-    --- 4. REGLAS DE OPERACIÓN Y SEGURIDAD ---
-    - CERO INVENCIÓN: NO inventes precios. Si no tienes el dato, ofrece comunicar con un vendedor humano.
-    - FILTRO MAYORISTA: Si el cliente parece ser detal ("tienes una pieza para mi carro"), explica amablemente que ONE4CARS vende exclusivamente al mayor (Mínimo $100) y ofrece el link de registro para tiendas (opción 6).
-    - Asignación de Vendedores: Si alguien dice ser vendedor y da su cédula, indica que debes validar su identidad contra la base de datos interna (simulado).
-
-    INSTRUCCIONES DE RESPUESTA:
-    Responde al usuario basándote estrictamente en lo anterior. Sé amable, usa emojis (🚗, 📦, 🔧) y mantén la esencia venezolana.
-    `;
+        return instruccionesFinales;
+    } catch (err) {
+        console.error("Error leyendo instrucciones.txt:", err);
+        return "Eres un asistente de ventas de ONE4CARS."; // Fallback mínimo
+    }
 }
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     const { version } = await fetchLatestBaileysVersion();
     
-    const sock = makeWASocket({ 
-        version, 
-        auth: state, 
-        logger: pino({ level: 'silent' }), 
-        browser: ["ONE4CARS", "Chrome", "1.0.0"]
+    const sock = makeWASocket({
+         version,
+         auth: state,
+         logger: pino({ level: 'silent' }),
+         browser: ["ONE4CARS", "Chrome", "1.0.0"]
     });
 
     socketBot = sock;
@@ -135,10 +110,9 @@ async function startBot() {
         try {
             if (!apiKey) throw new Error("Key no configurada");
 
-            // Construimos el prompt dinámico con las tasas del día y las reglas
+            // Construimos el prompt dinámico leyendo el TXT
             const systemInstructions = await construirInstrucciones();
 
-            // Enviamos el contexto + el mensaje del cliente a Gemini
             const chat = model.startChat({
                 history: [
                     {
@@ -162,17 +136,8 @@ async function startBot() {
 
         } catch (e) {
             console.error("Error en Gemini o API:", e);
-            // RESPUESTA MANUAL DE RESPALDO (FALLBACK)
-            const saludoError = "🚗 *ONE4-Bot:* Estimado cliente, disculpe, estoy actualizando mis sistemas. 🔧\n\nPero aquí le dejo nuestros accesos directos:\n\n";
-            const menuFallback = `
-1️⃣ *Pagos:* https://www.one4cars.com/medios_de_pago.php/
-2️⃣ *Edo. Cuenta:* https://www.one4cars.com/estado_de_cuenta.php/
-3️⃣ *Precios:* https://www.one4cars.com/lista_de_precios.php/
-4️⃣ *Pedidos:* https://www.one4cars.com/tomar_pedido.php/
-6️⃣ *Registro:* https://www.one4cars.com/afiliar_clientes.php/
-8️⃣ *Despacho:* https://www.one4cars.com/despacho.php/
-
-Estamos a su orden. Un asesor humano revisará su mensaje en breve.`;
+            const saludoError = "🚗 *ONE4-Bot:* Estimado usuario,. 🔧\n\nPero aquí le dejo nuestros accesos directos:\n\n";
+            const menuFallback = ` 1️⃣ *Pagos:* https://www.one4cars.com/medios_de_pago.php/ 2️⃣ *Edo. Cuenta:* https://www.one4cars.com/estado_de_cuenta.php/ 3️⃣ *Precios:* https://www.one4cars.com/lista_de_precios.php/ 4️⃣ *Pedidos:* https://www.one4cars.com/tomar_pedido.php/ 6️⃣ *Registro:* https://www.one4cars.com/afiliar_clientes.php/ 8️⃣ *Despacho:* https://www.one4cars.com/despacho.php/  Estamos a su orden. Un asesor humano revisará su mensaje en breve.`;
             
             await sock.sendMessage(from, { text: saludoError + menuFallback });
         }
@@ -182,7 +147,6 @@ Estamos a su orden. Un asesor humano revisará su mensaje en breve.`;
 const server = http.createServer(async (req, res) => {
     const parsedUrl = url.parse(req.url, true);
     
-    // HEADER PHP COMPLETO
     const header = `
         <header class="p-3 mb-4 border-bottom bg-dark text-white shadow">
             <div class="container d-flex justify-content-between align-items-center">
@@ -223,7 +187,6 @@ const server = http.createServer(async (req, res) => {
                                 <span class="badge bg-danger">Facturas: ${d.length}</span>
                             </div>
                         </div>
-
                         <form class="row g-2 mb-4 p-3 bg-light border rounded">
                             <div class="col-md-3">
                                 <label class="small fw-bold">Vendedor</label>
@@ -247,7 +210,6 @@ const server = http.createServer(async (req, res) => {
                                 <button class="btn btn-dark btn-sm w-100 fw-bold">FILTRAR LISTADO</button>
                             </div>
                         </form>
-
                         <div class="table-container rounded">
                             <table class="table table-hover table-sm text-center align-middle m-0">
                                 <thead>
@@ -276,7 +238,6 @@ const server = http.createServer(async (req, res) => {
                         </div>
                         <button onclick="enviar()" id="btnSend" class="btn btn-success w-100 py-3 mt-3 fw-bold shadow">🚀 ENVIAR RECORDATORIOS MASIVOS</button>
                     </div>
-
                     <script>
                         document.getElementById('selectAll').onclick = function() {
                             document.querySelectorAll('.rowCheck').forEach(c => c.checked = this.checked);
@@ -298,10 +259,10 @@ const server = http.createServer(async (req, res) => {
         } catch (e) { res.end(`Error SQL: ${e.message}`); }
     } else if (parsedUrl.pathname === '/enviar-cobranza' && req.method === 'POST') {
         let b = ''; req.on('data', c => b += c);
-        req.on('end', () => { 
-            cobranza.ejecutarEnvioMasivo(socketBot, JSON.parse(b).facturas); 
-            res.end("OK"); 
-        });
+        req.on('end', () => {
+             cobranza.ejecutarEnvioMasivo(socketBot, JSON.parse(b).facturas);
+             res.end("OK");
+         });
     } else {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(`
@@ -316,8 +277,8 @@ const server = http.createServer(async (req, res) => {
                         <h4 class="mb-4">Status de Conexión</h4>
                         <div class="mb-4">
                             ${qrCodeData.startsWith('data') 
-                                ? `<img src="${qrCodeData}" class="border shadow rounded p-2 bg-white" style="width: 250px;">` 
-                                : `<div class="alert alert-success fw-bold p-4 h2">${qrCodeData || "Iniciando..."}</div>`
+                                 ? `<img src="${qrCodeData}" class="border shadow rounded p-2 bg-white" style="width: 250px;">` 
+                                 : `<div class="alert alert-success fw-bold p-4 h2">${qrCodeData || "Iniciando..."}</div>`
                             }
                         </div>
                         <p class="text-muted small">Escanee el código para activar el servicio de ONE4CARS</p>
