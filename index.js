@@ -104,6 +104,13 @@ const randomDelay = async () => {
     await sleep(ms);
 };
 
+// CONTROL DE MODO (BOT vs HUMANO)
+async function setModo(tel, modo) {
+    const conn = await db();
+    await conn.execute("INSERT INTO control_chat (telefono, modo) VALUES (?, ?) ON DUPLICATE KEY UPDATE modo = VALUES(modo)", [tel, modo]);
+    await conn.end();
+}
+
 // DETECCIÓN DE VENDEDORES
 async function buscarVendedor(jid, pushName) {
     const telLimpio = jid.split('@')[0]; 
@@ -208,9 +215,23 @@ async function startBot() {
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
         const msg = messages[0];
-        if (!msg.message || msg.key.fromMe) return;
+        if (!msg.message) return;
 
         const from = msg.key.remoteJid;
+        if (from === 'status@broadcast') return;
+
+        // --- DETECTAR SI EL HUMANO RESPONDE (fromMe) ---
+        if (msg.key.fromMe) {
+            const textMe = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").toLowerCase();
+            if (textMe === '!bot') {
+                await setModo(from, 'bot');
+                await sock.sendMessage(from, { text: "🤖 IA Reactivada para este chat." });
+            } else {
+                await setModo(from, 'humano');
+            }
+            return;
+        }
+
         if (from.includes('@g.us')) return;
 
         const pushName = msg.pushName || "Usuario";
@@ -220,6 +241,10 @@ async function startBot() {
         const text = normalizar(rawText);
         const isAdmin = from.includes(ADMIN_ID);
         const rifDetectado = rawText.replace(/\D/g, '');
+
+        // VERIFICAR MODO DEL CHAT
+        const sesion = await getSesion(from);
+        if (sesion && sesion.modo === 'humano') return;
 
         // 1. DETECCIÓN DE VENDEDOR
         const vendedor = await buscarVendedor(from, pushName);
@@ -239,8 +264,6 @@ async function startBot() {
         }
 
         // 3. LÓGICA DE CLIENTE
-        const sesion = await getSesion(from);
-
         if (rifDetectado.length >= 6 && (!sesion || !sesion.id_cliente_int || text.includes('rif'))) {
             const c = await buscarCliente(rifDetectado);
             if (c) {
@@ -272,11 +295,16 @@ async function startBot() {
             return await sock.sendMessage(from, { text: listado });
         }
 
+        // --- RESPUESTA CON IA DE GOOGLE ---
         try {
-            const inst = fs.readFileSync('./instrucciones.txt', 'utf8');
-            const result = await model.generateContent(`${inst}\n\nCliente: ${rawText}`);
+            let instrucciones = "Eres el asistente virtual de ONE4CARS, una empresa de repuestos automotrices en Venezuela. Sé amable y profesional.";
+            if (fs.existsSync('./instrucciones.txt')) {
+                instrucciones = fs.readFileSync('./instrucciones.txt', 'utf8');
+            }
+            const prompt = `${instrucciones}\n\nCliente: ${pushName}\nPregunta: ${rawText}\nRespuesta:`;
+            const result = await model.generateContent(prompt);
             await sock.sendMessage(from, { text: result.response.text() });
-        } catch (e) {}
+        } catch (e) { console.error("IA Error"); }
     });
 }
 
@@ -322,20 +350,12 @@ const server = http.createServer(async (req, res) => {
                 if (rows[0]) {
                     const c = rows[0];
                     const jid = formatWhatsApp(c.celular);
-                    if (!jid) continue;
                     try {
                         await socketBot.sendPresenceUpdate('composing', jid);
                         if (data.tipo === 'precios') {
                             await socketBot.sendMessage(jid, { document: { url: PDF_URL }, fileName: 'Catalogo-ONE4CARS.pdf', mimetype: 'application/pdf', caption: `¡Hola *${c.nombres}*! Aquí tienes nuestro catálogo actualizado. 🚀` });
                         } else if (data.tipo === 'promo') {
-                            let msg = "";
-                            if (data.subtipo === 'bienvenida') {
-                                msg = `*🛠️ ¡Tu Negocio, al Máximo Nivel con ONE4CARS!*\n\n¡Hola *${c.nombres}*! 👋\n\nRecibe un cordial saludo de la gerencia de ventas de *ONE4CARS*. ¡Estamos encantados de tenerte como aliado comercial!\n\n*🌐 Acceso a tu Portal Mayorista:*\n*Enlace:* https://one4cars.com/mayoristas\n*LOGIN:* ${c.usuario}\n*PASSWORD:* ${c.clave}\n\n*🚀 Tu página personalizada:*\n➡️ https://www.one4cars.com/${c.usuario}`;
-                            } else if (data.subtipo === 'satisfaccion') {
-                                msg = `*📊 CONSULTA DE SATISFACCIÓN - ONE4CARS*\n\n¡Hola *${c.nombres}*! 👋\n\nEn *ONE4CARS* nos importa mucho tu opinión. Queremos saber: ¿Cómo ha sido tu experiencia con la calidad de nuestros productos?`;
-                            } else if (data.subtipo === 'custom') {
-                                msg = data.mensaje;
-                            }
+                            let msg = data.subtipo === 'bienvenida' ? `*🛠️ ¡Tu Negocio, al Máximo Nivel con ONE4CARS!*\n\n¡Hola *${c.nombres}*! 👋\n\nRecibe un cordial saludo de la gerencia de ventas de *ONE4CARS*.\n\n*🌐 Acceso a tu Portal Mayorista:*\n*Enlace:* https://one4cars.com/mayoristas\n*LOGIN:* ${c.usuario}\n*PASSWORD:* ${c.clave}\n\n*🚀 Tu página personalizada:*\n➡️ https://www.one4cars.com/${c.usuario}` : (data.subtipo === 'satisfaccion' ? `*📊 CONSULTA DE SATISFACCIÓN - ONE4CARS*\n\n¡Hola *${c.nombres}*! 👋\n\n¿Cómo ha sido tu experiencia con la calidad de nuestros productos?` : data.mensaje);
                             await socketBot.sendMessage(jid, { text: msg });
                         }
                         count++;
@@ -360,23 +380,19 @@ const server = http.createServer(async (req, res) => {
                     [id_cliente]
                 );
                 await conn.end();
-
                 for (const f of facturas) {
                     const jid = formatWhatsApp(f.celular);
-                    if (!jid) continue;
                     const saldoBs = (f.total - f.abono_factura) / (f.porcentaje || 1);
                     const diffDays = Math.ceil(Math.abs(new Date() - new Date(f.fecha_reg)) / (1000 * 60 * 60 * 24));
                     const diasVencidos = diffDays > 30 ? diffDays - 30 : 0;
-
-                    const msgCobranza = `Hola *${f.nombres}* 🚗, de *ONE4CARS*.\n\nLe Notificamos que su Nota está pendiente:\n\n*Factura:* ${f.nro_factura}\n*Saldo:* Bs. *${saldoBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}*\n*Presenta:* ${diasVencidos} días vencidos\n\nPor favor, gestione su pago a la brevedad. Cuide su crédito, es valioso.`;
-
+                    const msgCobranza = `Hola *${f.nombres}* 🚗, de *ONE4CARS*.\n\nLe Notificamos que su Nota está pendiente:\n\n*Factura:* ${f.nro_factura}\n*Saldo:* Bs. *${saldoBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}*\n*Presenta:* ${diasVencidos} días vencidos\n\nPor favor, gestione su pago a la brevedad. Cuide su crédito.`;
                     try {
                         await socketBot.sendPresenceUpdate('composing', jid);
                         await socketBot.sendMessage(jid, { text: msgCobranza });
                         count++;
                         if (count % 5 === 0) { console.log("🛑 Pausa anti-bloqueo (2 min)..."); await sleep(120000); }
                         else { await randomDelay(); }
-                    } catch (e) { console.log("Error cobranza a", jid); }
+                    } catch (e) { console.log("Error cobranza"); }
                 }
             }
             res.end("OK");
@@ -421,7 +437,7 @@ const server = http.createServer(async (req, res) => {
                     
                     <div class="col-md-10 col-lg-7">
                         <div class="card shadow-lg p-4">
-                            <h4 class="mb-4">Marketing Rápido</h4>
+                            <h4>Marketing Rápido</h4>
                             <div class="row g-2 mb-4">
                                 <div class="col-6">
                                     <select id="m_vendedor" class="form-select">
