@@ -1,3 +1,5 @@
+--- START OF FILE text/javascript ---
+
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode');
@@ -159,10 +161,11 @@ async function buscarCliente(rifLimpio) {
     return r[0] || null;
 }
 
+// MODIFICADO: Se agrega 'porcentaje' a la consulta SQL
 async function obtenerDetalleFacturas(id_cliente) {
     const conn = await db();
     const [facturas] = await conn.execute(
-        "SELECT nro_factura, total, abono_factura, fecha_reg FROM tab_facturas WHERE id_cliente = ? AND pagada = 'NO' AND anulado = 'no'", 
+        "SELECT nro_factura, total, abono_factura, fecha_reg, porcentaje FROM tab_facturas WHERE id_cliente = ? AND pagada = 'NO' AND anulado = 'no'", 
         [id_cliente]
     );
     await conn.end();
@@ -264,7 +267,8 @@ async function startBot() {
             let totalP = 0;
             let listado = "*📄 SUS FACTURAS PENDIENTES:*\n\n";
             facturas.forEach(f => {
-                const p = f.total - f.abono_factura;
+                // MODIFICADO: Se aplica la división por porcentaje (si no existe, se divide por 1)
+                const p = (f.total - f.abono_factura) / (f.porcentaje || 1);
                 totalP += p;
                 listado += `🔸 #${f.nro_factura} | $${p.toFixed(2)}\n`;
             });
@@ -330,7 +334,7 @@ const server = http.createServer(async (req, res) => {
                         } else if (data.tipo === 'promo') {
                             let msg = "";
                             if (data.subtipo === 'bienvenida') {
-                                msg = `*🛠️ ¡Tu Negocio, al Máximo Nivel con ONE4CARS!*\n\n¡Hola *${c.nombres}*! 👋\n\nRecibe un cordial saludo de la gerencia de ventas de *ONE4CARS*. ¡Estamos encantados de tenerte como aliado comercial!\n\n*🌐 Acceso a tu Portal Mayorista:*\n*Enlace:* https://one4cars.com/mayoristas\n*LOGIN:* ${c.usuario}\n*PASSWORD:* ${c.clave}\n\n*🚀 Tu página personalizada:*\n➡️ https://www.one4cars.com/${c.usuario}`;
+                                msg = `*🛠️ ¡Tu Negocio, al Máximo Nivel con ONE4CARS!*\n\n¡Hola *${c.nombres}*! 👋\n\nRecibe un cordial saludo de la gerencia de ventas de *ONE4CARS*. ¡Estamos encantados de tenerte como aliado comercial!\n\n*🌐 Acceso a tu Portal Mayorista:*\n*Enlace:* https://one4cars.com/mayoristas\n*LOGIN:* ${c.usuario}\n*PASSWORD:* ${c.clave}`;
                             } else if (data.subtipo === 'satisfaccion') {
                                 msg = `*📊 CONSULTA DE SATISFACCIÓN - ONE4CARS*\n\n¡Hola *${c.nombres}*! 👋\n\nEn *ONE4CARS* nos importa mucho tu opinión. Queremos saber: ¿Cómo ha sido tu experiencia con la calidad de nuestros productos?`;
                             } else if (data.subtipo === 'custom') {
