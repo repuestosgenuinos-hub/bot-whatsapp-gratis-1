@@ -31,11 +31,8 @@ const dbConfig = {
 };
 
 const PDF_URL = "https://www.one4cars.com/sevencorpweb/uploads/precios/Catalogo%20-%20ONE4CARS_compressed.pdf";
-
-// TU ID DE ADMINISTRADOR
 const ADMIN_ID = "228621243408492";
 
-// MENÚ COMPLETO RESTAURADO
 const MENU_TEXT = `📋 *MENÚ PRINCIPAL ONE4CARS*
 
 1️⃣ *Medios de pago:* 
@@ -87,24 +84,34 @@ function formatWhatsApp(jid) {
     if (!jid) return null;
     if (jid.toString().includes('@')) return jid;
     let clean = jid.toString().replace(/\D/g, ''); 
-    if (clean.startsWith('580')) {
-        clean = '58' + clean.substring(3);
-    }
+    if (clean.startsWith('580')) clean = '58' + clean.substring(3);
     if (clean.length > 15) return `${clean}@lid`;
     if (clean.startsWith('0')) clean = clean.substring(1);
     if (!clean.startsWith('58')) clean = '58' + clean;
     return `${clean}@s.whatsapp.net`;
 }
 
-// SISTEMA ANTI-BLOQUEO
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 const randomDelay = async () => {
-    const ms = Math.floor(Math.random() * (25000 - 15000 + 1)) + 15000; // 15-25 seg
-    console.log(`⏳ Pausa de seguridad: ${ms/1000}s`);
+    const ms = Math.floor(Math.random() * (25000 - 15000 + 1)) + 15000; 
     await sleep(ms);
 };
 
-// DETECCIÓN DE VENDEDORES
+async function generateAIWithRetry(model, prompt, retries = 3, delay = 2000) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const result = await model.generateContent(prompt);
+            return result.response.text();
+        } catch (error) {
+            const is503 = error.message?.includes('503') || error.message?.includes('Service Unavailable');
+            if (is503 && i < retries - 1) {
+                await sleep(delay);
+                delay *= 2;
+            } else { throw error; }
+        }
+    }
+}
+
 async function buscarVendedor(jid, pushName) {
     const telLimpio = jid.split('@')[0]; 
     const conn = await db();
@@ -128,7 +135,6 @@ async function initDB() {
             modo VARCHAR(20) DEFAULT 'bot', 
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )`);
-        console.log("✅ Base de Datos vinculada.");
     } catch (e) { console.log("❌ Error DB Init:", e.message); }
     finally { if(conn) await conn.end(); }
 }
@@ -140,6 +146,15 @@ async function getSesion(jid) {
         await conn.end();
         return r[0] || null;
     } catch (e) { return null; }
+}
+
+async function setModo(jid, modo) {
+    const conn = await db();
+    await conn.execute(`
+        INSERT INTO control_chat (telefono, modo) VALUES (?, ?) 
+        ON DUPLICATE KEY UPDATE modo=VALUES(modo)
+    `, [jid, modo]);
+    await conn.end();
 }
 
 async function guardarUsuario(jid, usuario, id_int) {
@@ -162,7 +177,7 @@ async function buscarCliente(rifLimpio) {
 async function obtenerDetalleFacturas(id_cliente) {
     const conn = await db();
     const [facturas] = await conn.execute(
-        "SELECT nro_factura, total, abono_factura, fecha_reg FROM tab_facturas WHERE id_cliente = ? AND pagada = 'NO' AND anulado = 'no'", 
+        "SELECT nro_factura, total, abono_factura, fecha_reg, porcentaje FROM tab_facturas WHERE id_cliente = ? AND pagada = 'NO' AND anulado = 'no'", 
         [id_cliente]
     );
     await conn.end();
@@ -174,9 +189,7 @@ async function actualizarDolar() {
         const res = await axios.get('https://pydolarvenezuela-api.vercel.app/api/v1/dollar?monitor=enparalelovzla');
         dolarInfo.bcv = res.data.monitors?.bcv?.price || "N/D";
         dolarInfo.paralelo = res.data.monitors?.enparalelovzla?.price || "N/D";
-    } catch (e) { 
-        dolarInfo.bcv = "Error"; dolarInfo.paralelo = "Error";
-    }
+    } catch (e) { dolarInfo.bcv = "Error"; dolarInfo.paralelo = "Error"; }
 }
 
 // ===== BOT WHATSAPP =====
@@ -208,10 +221,26 @@ async function startBot() {
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
         const msg = messages[0];
-        if (!msg.message || msg.key.fromMe) return;
+        if (!msg.message) return;
 
         const from = msg.key.remoteJid;
         if (from.includes('@g.us')) return;
+
+        // --- LÓGICA DE INTERVENCIÓN HUMANA ---
+        if (msg.key.fromMe) {
+            const rawText = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").trim();
+            
+            // Si el humano escribe /bot, reactivamos el bot para ese cliente
+            if (rawText.toLowerCase() === '/bot') {
+                await setModo(from, 'bot');
+                await sock.sendMessage(from, { text: "🤖 *Bot reactivado.* Ahora volveré a responder automáticamente." });
+            } else {
+                // Si el humano escribe cualquier otra cosa, el bot se calla para este cliente
+                await setModo(from, 'humano');
+                console.log(`👤 Intervención humana detectada en ${from}. Bot pausado.`);
+            }
+            return;
+        }
 
         const pushName = msg.pushName || "Usuario";
         const rawText = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").trim();
@@ -220,6 +249,10 @@ async function startBot() {
         const text = normalizar(rawText);
         const isAdmin = from.includes(ADMIN_ID);
         const rifDetectado = rawText.replace(/\D/g, '');
+
+        // VERIFICAR SI EL BOT ESTÁ PAUSADO PARA ESTE CLIENTE
+        const sesion = await getSesion(from);
+        if (sesion && sesion.modo === 'humano') return; 
 
         // 1. DETECCIÓN DE VENDEDOR
         const vendedor = await buscarVendedor(from, pushName);
@@ -238,33 +271,28 @@ async function startBot() {
             }
         }
 
-        // 3. LÓGICA DE CLIENTE
-        const sesion = await getSesion(from);
-
+        // 3. VINCULACIÓN DE RIF
         if (rifDetectado.length >= 6 && (!sesion || !sesion.id_cliente_int || text.includes('rif'))) {
             const c = await buscarCliente(rifDetectado);
             if (c) {
                 await guardarUsuario(from, rifDetectado, c.id_cliente);
-                return await sock.sendMessage(from, { text: `✅ ¡Hola ${c.nombres}! RIF vinculado.\n\n${MENU_TEXT}` });
+                return await sock.sendMessage(from, { text: `✅ ¡Hola ${c.nombres}! RIF vinculado correctamente.\n\n${MENU_TEXT}` });
             }
         }
 
-        if (!sesion || !sesion.id_cliente_int) {
-            if (["menu", "bot", "hola"].some(w => text.includes(w))) {
-                return await sock.sendMessage(from, { text: "👋 Bienvenido a *ONE4CARS*.\n\nPor favor envíe su *RIF o Cédula* (solo números) para identificarse." });
-            }
-            return;
-        }
-
+        // 4. COMANDOS RÁPIDOS
         if (text === 'menu') return await sock.sendMessage(from, { text: MENU_TEXT });
         
         if (text.includes("saldo") || text === '2') {
+            if (!sesion || !sesion.id_cliente_int) {
+                return await sock.sendMessage(from, { text: "🔐 Para consultar su saldo, por favor envíe su *RIF o Cédula* (solo números)." });
+            }
             const facturas = await obtenerDetalleFacturas(sesion.id_cliente_int);
             if (facturas.length === 0) return await sock.sendMessage(from, { text: "✅ Usted no posee facturas pendientes de pago. ¡Gracias!" });
             let totalP = 0;
             let listado = "*📄 SUS FACTURAS PENDIENTES:*\n\n";
             facturas.forEach(f => {
-                const p = f.total - f.abono_factura;
+                const p = (f.total - f.abono_factura) / (f.porcentaje || 1);
                 totalP += p;
                 listado += `🔸 #${f.nro_factura} | $${p.toFixed(2)}\n`;
             });
@@ -272,11 +300,18 @@ async function startBot() {
             return await sock.sendMessage(from, { text: listado });
         }
 
+        // 5. MOTOR DE IA
         try {
             const inst = fs.readFileSync('./instrucciones.txt', 'utf8');
-            const result = await model.generateContent(`${inst}\n\nCliente: ${rawText}`);
-            await sock.sendMessage(from, { text: result.response.text() });
-        } catch (e) {}
+            const estadoUsuario = sesion && sesion.id_cliente_int ? `Usuario Identificado (ID: ${sesion.id_cliente_int})` : "Usuario NO Identificado";
+            const prompt = `${inst}\n\nEstado del Usuario: ${estadoUsuario}\nCliente dice: ${rawText}`;
+            
+            const aiResponse = await generateAIWithRetry(model, prompt);
+            await sock.sendMessage(from, { text: aiResponse });
+        } catch (e) {
+            console.error("Error IA:", e.message);
+            await sock.sendMessage(from, { text: "🙏 Disculpe, estoy teniendo un problema técnico. Por favor, intente de nuevo en un momento o escriba *menu*." });
+        }
     });
 }
 
@@ -330,7 +365,7 @@ const server = http.createServer(async (req, res) => {
                         } else if (data.tipo === 'promo') {
                             let msg = "";
                             if (data.subtipo === 'bienvenida') {
-                                msg = `*🛠️ ¡Tu Negocio, al Máximo Nivel con ONE4CARS!*\n\n¡Hola *${c.nombres}*! 👋\n\nRecibe un cordial saludo de la gerencia de ventas de *ONE4CARS*. ¡Estamos encantados de tenerte como aliado comercial!\n\n*🌐 Acceso a tu Portal Mayorista:*\n*Enlace:* https://one4cars.com/mayoristas\n*LOGIN:* ${c.usuario}\n*PASSWORD:* ${c.clave}\n\n*🚀 Tu página personalizada:*\n➡️ https://www.one4cars.com/${c.usuario}`;
+                                msg = `*🛠️ ¡Tu Negocio, al Máximo Nivel con ONE4CARS!*\n\n¡Hola *${c.nombres}*! 👋\n\nRecibe un cordial saludo de la gerencia de ventas de *ONE4CARS*. ¡Estamos encantados de tenerte como aliado comercial!\n\n*🌐 Acceso a tu Portal Mayorista:*\n*Enlace:* https://one4cars.com/mayoristas\n*LOGIN:* ${c.usuario}\n*PASSWORD:* ${c.clave}`;
                             } else if (data.subtipo === 'satisfaccion') {
                                 msg = `*📊 CONSULTA DE SATISFACCIÓN - ONE4CARS*\n\n¡Hola *${c.nombres}*! 👋\n\nEn *ONE4CARS* nos importa mucho tu opinión. Queremos saber: ¿Cómo ha sido tu experiencia con la calidad de nuestros productos?`;
                             } else if (data.subtipo === 'custom') {
@@ -339,7 +374,7 @@ const server = http.createServer(async (req, res) => {
                             await socketBot.sendMessage(jid, { text: msg });
                         }
                         count++;
-                        if (count % 5 === 0) { console.log("🛑 Pausa anti-bloqueo (2 min)..."); await sleep(120000); }
+                        if (count % 5 === 0) { await sleep(120000); }
                         else { await randomDelay(); }
                     } catch (e) { console.log("Error enviando a", jid); }
                 }
@@ -374,7 +409,7 @@ const server = http.createServer(async (req, res) => {
                         await socketBot.sendPresenceUpdate('composing', jid);
                         await socketBot.sendMessage(jid, { text: msgCobranza });
                         count++;
-                        if (count % 5 === 0) { console.log("🛑 Pausa anti-bloqueo (2 min)..."); await sleep(120000); }
+                        if (count % 5 === 0) { await sleep(120000); }
                         else { await randomDelay(); }
                     } catch (e) { console.log("Error cobranza a", jid); }
                 }
