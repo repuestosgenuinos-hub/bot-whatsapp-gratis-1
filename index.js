@@ -38,32 +38,23 @@ const ADMIN_ID = "228621243408492";
 // MENÚ COMPLETO RESTAURADO
 const MENU_TEXT = `📋 *MENÚ PRINCIPAL ONE4CARS*
 
-1️⃣ *Medios de pago:* 
-https://www.one4cars.com/medios_de_pago.php/
+1️⃣ *Medios de pago:* https://www.one4cars.com/medios_de_pago.php/
 
-2️⃣ *Estado de cuenta:* 
-https://www.one4cars.com/estado_de_cuenta.php/
+2️⃣ *Estado de cuenta:* https://www.one4cars.com/estado_de_cuenta.php/
 
-3️⃣ *Lista de precios:* 
-https://www.one4cars.com/lista_de_precios.php/
+3️⃣ *Lista de precios:* https://www.one4cars.com/lista_de_precios.php/
 
-4️⃣ *Tomar pedido:* 
-https://www.one4cars.com/tomar_pedido.php/
+4️⃣ *Tomar pedido:* https://www.one4cars.com/tomar_pedido.php/
 
-5️⃣ *Mis clientes/Vendedores:* 
-https://www.one4cars.com/mis_clientes.php/
+5️⃣ *Mis clientes/Vendedores:* https://www.one4cars.com/mis_clientes.php/
 
-6️⃣ *Afiliar cliente:* 
-https://www.one4cars.com/afiliar_clientes.php/
+6️⃣ *Afiliar cliente:* https://www.one4cars.com/afiliar_clientes.php/
 
-7️⃣ *Consulta de productos:* 
-https://www.one4cars.com/consulta_productos.php/
+7️⃣ *Consulta de productos:* https://www.one4cars.com/consulta_productos.php/
 
-8️⃣ *Seguimiento Despacho:* 
-https://www.one4cars.com/despacho.php/
+8️⃣ *Seguimiento Despacho:* https://www.one4cars.com/despacho.php/
 
-9️⃣ *Asesor Humano:* 
-Indique su duda y un operador revisará el caso pronto.
+9️⃣ *Asesor Humano:* Indique su duda y un operador revisará el caso pronto.
 
 _Escriba el número de la opción o su consulta directamente._`;
 
@@ -175,7 +166,7 @@ async function actualizarDolar() {
         dolarInfo.bcv = res.data.monitors?.bcv?.price || "N/D";
         dolarInfo.paralelo = res.data.monitors?.enparalelovzla?.price || "N/D";
     } catch (e) { 
-        dolarInfo.bcv = "Error"; dolarInfo.paralelo = "Error";
+        dolarInfo.bcv = "N/D"; dolarInfo.paralelo = "N/D";
     }
 }
 
@@ -356,7 +347,7 @@ const server = http.createServer(async (req, res) => {
             for (const id_cliente of data.facturas) {
                 const conn = await db();
                 const [facturas] = await conn.execute(
-                    "SELECT f.nro_factura, f.total, f.abono_factura, f.fecha_reg, f.porcentaje, c.nombres, c.celular FROM tab_facturas f JOIN tab_clientes c ON f.id_cliente = c.id_cliente WHERE f.id_cliente = ? AND f.pagada = 'NO' AND f.anulado = 'no'", 
+                    "SELECT f.nro_factura, f.total, f.abono_factura, f.fecha_reg, c.nombres, c.celular FROM tab_facturas f JOIN tab_clientes c ON f.id_cliente = c.id_cliente WHERE f.id_cliente = ? AND f.pagada = 'NO' AND f.anulado = 'no'", 
                     [id_cliente]
                 );
                 await conn.end();
@@ -364,11 +355,18 @@ const server = http.createServer(async (req, res) => {
                 for (const f of facturas) {
                     const jid = formatWhatsApp(f.celular);
                     if (!jid) continue;
-                    const saldoBs = (f.total - f.abono_factura) / (f.porcentaje || 1);
-                    const diffDays = Math.ceil(Math.abs(new Date() - new Date(f.fecha_reg)) / (1000 * 60 * 60 * 24));
-                    const diasVencidos = diffDays > 30 ? diffDays - 30 : 0;
 
-                    const msgCobranza = `Hola *${f.nombres}* 🚗, de *ONE4CARS*.\n\nLe Notificamos que su Nota está pendiente:\n\n*Factura:* ${f.nro_factura}\n*Saldo:* Bs. *${saldoBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}*\n*Presenta:* ${diasVencidos} días vencidos\n\nPor favor, gestione su pago a la brevedad. Cuide su crédito, es valioso.`;
+                    const saldoDolar = f.total - f.abono_factura;
+                    const tasaBcvNum = parseFloat(dolarInfo.bcv.toString().replace(',', '.'));
+                    const totalBs = isNaN(tasaBcvNum) ? "N/D" : (saldoDolar * tasaBcvNum).toLocaleString('es-VE', {minimumFractionDigits: 2});
+
+                    // Cálculo de días vencidos (fecha_reg vs Hoy)
+                    const fechaFactura = new Date(f.fecha_reg);
+                    const hoy = new Date();
+                    const diffTime = Math.abs(hoy - fechaFactura);
+                    const diasVencidos = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+                    const msgCobranza = `Hola *${f.nombres}* 🚗, de *ONE4CARS*.\n\nLe Notificamos que su Nota está pendiente:\n\n*Factura:* ${f.nro_factura}\n*Saldo:* $ *${saldoDolar.toFixed(2)}*\n*Presenta:* ${diasVencidos} días vencidos y puede ser pagada a cotización BCV *${dolarInfo.bcv}* en este momento, para un total de: *Bs. ${totalBs}*\n\nPor favor, gestione su pago a la brevedad. Cuide su crédito, es valioso.`;
 
                     try {
                         await socketBot.sendPresenceUpdate('composing', jid);
@@ -474,7 +472,7 @@ const server = http.createServer(async (req, res) => {
                         fetch('/enviar-marketing', {
                             method: 'POST',
                             headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({ clientes: ids, mensaje: msg })
+                            body: JSON.stringify({ clientes: ids, mensaje: msg, tipo: 'precios' })
                         }).then(() => alert("Campaña iniciada con pausas anti-bloqueo."));
                     }
                 }
