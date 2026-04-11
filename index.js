@@ -38,39 +38,30 @@ const ADMIN_ID = "228621243408492";
 // MENÚ COMPLETO RESTAURADO
 const MENU_TEXT = `📋 *MENÚ PRINCIPAL ONE4CARS*
 
-1️⃣ *Medios de pago:* 
-https://www.one4cars.com/medios_de_pago.php/
+1️⃣ *Medios de pago:* https://www.one4cars.com/medios_de_pago.php/
 
-2️⃣ *Estado de cuenta:* 
-https://www.one4cars.com/estado_de_cuenta.php/
+2️⃣ *Estado de cuenta:* https://www.one4cars.com/estado_de_cuenta.php/
 
-3️⃣ *Lista de precios:* 
-https://www.one4cars.com/lista_de_precios.php/
+3️⃣ *Lista de precios:* https://www.one4cars.com/lista_de_precios.php/
 
-4️⃣ *Tomar pedido:* 
-https://www.one4cars.com/tomar_pedido.php/
+4️⃣ *Tomar pedido:* https://www.one4cars.com/tomar_pedido.php/
 
-5️⃣ *Mis clientes/Vendedores:* 
-https://www.one4cars.com/mis_clientes.php/
+5️⃣ *Mis clientes/Vendedores:* https://www.one4cars.com/mis_clientes.php/
 
-6️⃣ *Afiliar cliente:* 
-https://www.one4cars.com/afiliar_clientes.php/
+6️⃣ *Afiliar cliente:* https://www.one4cars.com/afiliar_clientes.php/
 
-7️⃣ *Consulta de productos:* 
-https://www.one4cars.com/consulta_productos.php/
+7️⃣ *Consulta de productos:* https://www.one4cars.com/consulta_productos.php/
 
-8️⃣ *Seguimiento Despacho:* 
-https://www.one4cars.com/despacho.php/
+8️⃣ *Seguimiento Despacho:* https://www.one4cars.com/despacho.php/
 
-9️⃣ *Asesor Humano:* 
-Indique su duda y un operador revisará el caso pronto.
+9️⃣ *Asesor Humano:* Indique su duda y un operador revisará el caso pronto.
 
 _Escriba el número de la opción o su consulta directamente._`;
 
 // VARIABLES GLOBALES
 let qrCodeData = "Iniciando...";
 let socketBot = null;
-let dolarInfo = { bcv: 'Cargando...', paralelo: 'Cargando...' };
+let dolarInfo = { bcv: 45.50, paralelo: 54.20 };
 
 // ===== FUNCIONES DE APOYO =====
 async function db() { return await mysql.createConnection(dbConfig); }
@@ -99,7 +90,7 @@ function formatWhatsApp(jid) {
 // SISTEMA ANTI-BLOQUEO
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 const randomDelay = async () => {
-    const ms = Math.floor(Math.random() * (25000 - 15000 + 1)) + 15000; // 15-25 seg
+    const ms = Math.floor(Math.random() * (25000 - 15000 + 1)) + 15000;
     console.log(`⏳ Pausa de seguridad: ${ms/1000}s`);
     await sleep(ms);
 };
@@ -109,7 +100,7 @@ async function buscarVendedor(jid, pushName) {
     const telLimpio = jid.split('@')[0]; 
     const conn = await db();
     const [r] = await conn.execute(
-        "SELECT * FROM tab_vendedores WHERE celular_vendedor LIKE ? OR telefono_vendedor LIKE ? OR nombre LIKE ? LIMIT 1", 
+        "SELECT * FROM tab_vendedores WHERE (celular_vendedor LIKE ? OR telefono_vendedor LIKE ? OR nombre LIKE ?) AND id_vendedor != 20 LIMIT 1", 
         [`%${telLimpio}%`, `%${telLimpio}%`, `%${pushName}%`]
     );
     await conn.end();
@@ -154,15 +145,16 @@ async function guardarUsuario(jid, usuario, id_int) {
 
 async function buscarCliente(rifLimpio) {
     const conn = await db();
-    const [r] = await conn.execute("SELECT id_cliente, nombres, celular FROM tab_clientes WHERE clave = ? OR clave LIKE ? LIMIT 1", [rifLimpio, `%${rifLimpio}%`]);
+    const [r] = await conn.execute("SELECT id_cliente, nombres, celular FROM tab_clientes WHERE (clave = ? OR clave LIKE ?) LIMIT 1", [rifLimpio, `%${rifLimpio}%`]);
     await conn.end();
     return r[0] || null;
 }
 
 async function obtenerDetalleFacturas(id_cliente) {
     const conn = await db();
+    // Se asegura que el bot solo muestre facturas no anuladas y que no sean del vendedor 20
     const [facturas] = await conn.execute(
-        "SELECT nro_factura, total, abono_factura, fecha_reg FROM tab_facturas WHERE id_cliente = ? AND pagada = 'NO' AND anulado = 'no'", 
+        "SELECT nro_factura, total, abono_factura, fecha_reg FROM tab_facturas WHERE id_cliente = ? AND pagada = 'NO' AND anulado != 'si' AND id_vendedor != 20", 
         [id_cliente]
     );
     await conn.end();
@@ -171,11 +163,16 @@ async function obtenerDetalleFacturas(id_cliente) {
 
 async function actualizarDolar() {
     try {
-        const res = await axios.get('https://pydolarvenezuela-api.vercel.app/api/v1/dollar?monitor=enparalelovzla');
-        dolarInfo.bcv = res.data.monitors?.bcv?.price || "N/D";
-        dolarInfo.paralelo = res.data.monitors?.enparalelovzla?.price || "N/D";
+        const resOficial = await axios.get('https://ve.dolarapi.com/v1/dolares/oficial', { timeout: 2000 });
+        if (resOficial.data && resOficial.data.promedio > 0) {
+            dolarInfo.bcv = resOficial.data.promedio;
+        }
+        const resParalelo = await axios.get('https://ve.dolarapi.com/v1/dolares/paralelo', { timeout: 2000 });
+        if (resParalelo.data && resParalelo.data.promedio > 0) {
+            dolarInfo.paralelo = resParalelo.data.promedio;
+        }
     } catch (e) { 
-        dolarInfo.bcv = "Error"; dolarInfo.paralelo = "Error";
+        console.log("⚠️ Error en tasas.");
     }
 }
 
@@ -198,7 +195,7 @@ async function startBot() {
     sock.ev.on('connection.update', (u) => {
         const { connection, lastDisconnect, qr } = u;
         if (qr) qrcode.toDataURL(qr, { scale: 10 }, (_, url) => qrCodeData = url);
-        if (connection === 'open') { qrCodeData = "ONLINE ✅"; console.log("🚀 BOT MASTER ONLINE"); }
+        if (connection === 'open') { qrCodeData = "ONLINE ✅"; }
         if (connection === 'close') {
             const r = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
             if (r) startBot();
@@ -221,13 +218,11 @@ async function startBot() {
         const isAdmin = from.includes(ADMIN_ID);
         const rifDetectado = rawText.replace(/\D/g, '');
 
-        // 1. DETECCIÓN DE VENDEDOR
         const vendedor = await buscarVendedor(from, pushName);
         if (vendedor && (text === 'menu' || text === 'hola')) {
             return await sock.sendMessage(from, { text: `👋 Hola Vendedor(a) *${vendedor.nombre}*.\n\nBienvenido al sistema de gestión ONE4CARS.\n\n${MENU_TEXT}` });
         }
 
-        // 2. LÓGICA DE ADMINISTRADOR
         if (isAdmin) {
             if (text === 'dolar') {
                 await actualizarDolar();
@@ -238,7 +233,6 @@ async function startBot() {
             }
         }
 
-        // 3. LÓGICA DE CLIENTE
         const sesion = await getSesion(from);
 
         if (rifDetectado.length >= 6 && (!sesion || !sesion.id_cliente_int || text.includes('rif'))) {
@@ -291,6 +285,66 @@ const server = http.createServer(async (req, res) => {
         const d = await cobranza.obtenerListaDeudores(parsedUrl.query);
         res.end(await cobranza.generarHTML(v, z, d, header, parsedUrl.query));
 
+    } else if (parsedUrl.pathname === '/enviar-cobranza' && req.method === 'POST') {
+        if (!isBotReady()) return res.end("⚠️ Bot no listo.");
+        let b = ''; req.on('data', c => b += c);
+        req.on('end', async () => {
+            const data = JSON.parse(b);
+            let count = 0;
+            const { vendedor, zona, dias } = data.filtros || {};
+
+            for (const id_cliente of data.facturas) {
+                const conn = await db();
+                // CORRECCIÓN: Se agrega DATEDIFF en la consulta para filtrar CADA factura individualmente
+                let sql = `
+                    SELECT f.nro_factura, f.total, f.abono_factura, f.fecha_reg, c.nombres, c.celular 
+                    FROM tab_facturas f 
+                    JOIN tab_clientes c ON f.id_cliente = c.id_cliente 
+                    WHERE f.id_cliente = ? 
+                    AND f.pagada = 'NO' 
+                    AND f.anulado != 'si' 
+                    AND f.id_vendedor != 20
+                `;
+                const params = [id_cliente];
+
+                if (vendedor) { sql += " AND f.id_vendedor = ?"; params.push(vendedor); }
+                if (zona) { sql += " AND c.zona = ?"; params.push(zona); }
+                if (dias) { 
+                    // Esto asegura que solo traiga facturas que tengan los días solicitados o más
+                    sql += " AND DATEDIFF(CURDATE(), f.fecha_reg) >= ?"; 
+                    params.push(dias); 
+                }
+
+                const [facturas] = await conn.execute(sql, params);
+                await conn.end();
+
+                for (const f of facturas) {
+                    const jid = formatWhatsApp(f.celular);
+                    if (!jid) continue;
+
+                    const saldoDolar = f.total - f.abono_factura;
+                    const tasaBcvNum = typeof dolarInfo.bcv === 'number' ? dolarInfo.bcv : parseFloat(dolarInfo.bcv.toString().replace(',', '.'));
+                    const totalBs = isNaN(tasaBcvNum) ? "N/D" : (saldoDolar * tasaBcvNum).toLocaleString('es-VE', {minimumFractionDigits: 2});
+
+                    const fechaFactura = new Date(f.fecha_reg);
+                    const hoy = new Date();
+                    const diffTime = Math.abs(hoy - fechaFactura);
+                    const diasVencidos = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+                    const msgCobranza = `Hola *${f.nombres}* 🚗, de *ONE4CARS*.\n\nLe Notificamos que su Nota está pendiente:\n\n*Factura:* ${f.nro_factura}\n*Saldo:* $ *${saldoDolar.toFixed(2)}*\n*Presenta:* ${diasVencidos} días vencidos y puede ser pagada a cotización BCV *${dolarInfo.bcv}* en este momento, para un total de: *Bs. ${totalBs}*\n\nPor favor, gestione su pago a la brevedad. Cuide su crédito, es valioso.`;
+
+                    try {
+                        await socketBot.sendPresenceUpdate('composing', jid);
+                        await socketBot.sendMessage(jid, { text: msgCobranza });
+                        count++;
+                        if (count % 5 === 0) await sleep(120000);
+                        else await randomDelay();
+                    } catch (e) { console.log("Error en", jid); }
+                }
+            }
+            res.end("OK");
+        });
+
     } else if (parsedUrl.pathname === '/marketing-panel') {
         const v = await marketingModulo.obtenerVendedores();
         const z = await marketingModulo.obtenerZonas();
@@ -300,7 +354,7 @@ const server = http.createServer(async (req, res) => {
 
     } else if (parsedUrl.pathname === '/marketing-preview') {
         const conn = await db();
-        let sql = "SELECT id_cliente, nombres, celular FROM tab_clientes WHERE celular IS NOT NULL AND celular != ''";
+        let sql = "SELECT id_cliente, nombres, celular FROM tab_clientes WHERE celular IS NOT NULL AND celular != '' AND id_vendedor != 20";
         const params = [];
         if (parsedUrl.query.vendedor) { sql += " AND vendedor = ?"; params.push(parsedUrl.query.vendedor); }
         if (parsedUrl.query.zona) { sql += " AND zona = ?"; params.push(parsedUrl.query.zona); }
@@ -328,55 +382,13 @@ const server = http.createServer(async (req, res) => {
                         if (data.tipo === 'precios') {
                             await socketBot.sendMessage(jid, { document: { url: PDF_URL }, fileName: 'Catalogo-ONE4CARS.pdf', mimetype: 'application/pdf', caption: `¡Hola *${c.nombres}*! Aquí tienes nuestro catálogo actualizado. 🚀` });
                         } else if (data.tipo === 'promo') {
-                            let msg = "";
-                            if (data.subtipo === 'bienvenida') {
-                                msg = `*🛠️ ¡Tu Negocio, al Máximo Nivel con ONE4CARS!*\n\n¡Hola *${c.nombres}*! 👋\n\nRecibe un cordial saludo de la gerencia de ventas de *ONE4CARS*. ¡Estamos encantados de tenerte como aliado comercial!\n\n*🌐 Acceso a tu Portal Mayorista:*\n*Enlace:* https://one4cars.com/mayoristas\n*LOGIN:* ${c.usuario}\n*PASSWORD:* ${c.clave}\n\n*🚀 Tu página personalizada:*\n➡️ https://www.one4cars.com/${c.usuario}`;
-                            } else if (data.subtipo === 'satisfaccion') {
-                                msg = `*📊 CONSULTA DE SATISFACCIÓN - ONE4CARS*\n\n¡Hola *${c.nombres}*! 👋\n\nEn *ONE4CARS* nos importa mucho tu opinión. Queremos saber: ¿Cómo ha sido tu experiencia con la calidad de nuestros productos?`;
-                            } else if (data.subtipo === 'custom') {
-                                msg = data.mensaje;
-                            }
+                            let msg = data.subtipo === 'custom' ? data.mensaje : "Campaña ONE4CARS";
                             await socketBot.sendMessage(jid, { text: msg });
                         }
                         count++;
-                        if (count % 5 === 0) { console.log("🛑 Pausa anti-bloqueo (2 min)..."); await sleep(120000); }
-                        else { await randomDelay(); }
-                    } catch (e) { console.log("Error enviando a", jid); }
-                }
-            }
-            res.end("OK");
-        });
-
-    } else if (parsedUrl.pathname === '/enviar-cobranza' && req.method === 'POST') {
-        if (!isBotReady()) return res.end("⚠️ Bot no listo.");
-        let b = ''; req.on('data', c => b += c);
-        req.on('end', async () => {
-            const data = JSON.parse(b);
-            let count = 0;
-            for (const id_cliente of data.facturas) {
-                const conn = await db();
-                const [facturas] = await conn.execute(
-                    "SELECT f.nro_factura, f.total, f.abono_factura, f.fecha_reg, f.porcentaje, c.nombres, c.celular FROM tab_facturas f JOIN tab_clientes c ON f.id_cliente = c.id_cliente WHERE f.id_cliente = ? AND f.pagada = 'NO' AND f.anulado = 'no'", 
-                    [id_cliente]
-                );
-                await conn.end();
-
-                for (const f of facturas) {
-                    const jid = formatWhatsApp(f.celular);
-                    if (!jid) continue;
-                    const saldoBs = (f.total - f.abono_factura) / (f.porcentaje || 1);
-                    const diffDays = Math.ceil(Math.abs(new Date() - new Date(f.fecha_reg)) / (1000 * 60 * 60 * 24));
-                    const diasVencidos = diffDays > 30 ? diffDays - 30 : 0;
-
-                    const msgCobranza = `Hola *${f.nombres}* 🚗, de *ONE4CARS*.\n\nLe Notificamos que su Nota está pendiente:\n\n*Factura:* ${f.nro_factura}\n*Saldo:* Bs. *${saldoBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}*\n*Presenta:* ${diasVencidos} días vencidos\n\nPor favor, gestione su pago a la brevedad. Cuide su crédito, es valioso.`;
-
-                    try {
-                        await socketBot.sendPresenceUpdate('composing', jid);
-                        await socketBot.sendMessage(jid, { text: msgCobranza });
-                        count++;
-                        if (count % 5 === 0) { console.log("🛑 Pausa anti-bloqueo (2 min)..."); await sleep(120000); }
-                        else { await randomDelay(); }
-                    } catch (e) { console.log("Error cobranza a", jid); }
+                        if (count % 5 === 0) await sleep(120000);
+                        else await randomDelay();
+                    } catch (e) { console.log("Error marketing", jid); }
                 }
             }
             res.end("OK");
@@ -391,34 +403,34 @@ const server = http.createServer(async (req, res) => {
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-            <meta http-equiv="refresh" content="20">
+            <meta http-equiv="refresh" content="30">
             <title>Admin ONE4CARS</title>
             <style>
                 body { background-color: #f4f7f6; }
                 .card { border: none; border-radius: 15px; }
-                .btn-custom { border-radius: 10px; padding: 12px; font-weight: 600; transition: 0.3s; }
+                .btn-custom { border-radius: 10px; padding: 12px; font-weight: 600; }
             </style>
         </head>
         <body>
             ${header}
             <div class="container">
                 <div class="row justify-content-center">
-                    <div class="col-md-6 col-lg-5 mb-4">
-                        <div class="card shadow-lg p-4 text-center">
-                            <h4 class="mb-3">Estado del Bot</h4>
-                            <div class="my-4">
-                                ${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" class="img-fluid rounded shadow-sm" style="max-width: 250px;">` : `<h2 class="text-success">${qrCodeData}</h2>`}
+                    <div class="col-md-6 text-center">
+                        <div class="card shadow-lg p-4 mb-4">
+                            <h4>Estado del Bot</h4>
+                            <div class="my-3">
+                                ${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" style="max-width: 250px;">` : `<h2 class="text-success">${qrCodeData}</h2>`}
                             </div>
-                            <div class="p-3 bg-light rounded mb-4">
+                            <div class="p-2 bg-light rounded">
                                 <strong>BCV:</strong> ${dolarInfo.bcv} | <strong>Paralelo:</strong> ${dolarInfo.paralelo}
                             </div>
-                            <div class="d-grid gap-2">
-                                <a href="/cobranza" class="btn btn-primary btn-custom shadow-sm">PANEL DE COBRANZA</a>
-                                <a href="/marketing-panel" class="btn btn-info btn-custom text-white shadow-sm">PANEL DE MARKETING</a>
+                            <div class="d-grid gap-2 mt-4">
+                                <a href="/cobranza" class="btn btn-primary btn-custom">PANEL DE COBRANZA</a>
+                                <a href="/marketing-panel" class="btn btn-info btn-custom text-white">PANEL DE MARKETING</a>
                             </div>
                         </div>
                     </div>
-                    
+
                     <div class="col-md-10 col-lg-7">
                         <div class="card shadow-lg p-4">
                             <h4 class="mb-4">Marketing Rápido</h4>
@@ -474,7 +486,7 @@ const server = http.createServer(async (req, res) => {
                         fetch('/enviar-marketing', {
                             method: 'POST',
                             headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({ clientes: ids, mensaje: msg })
+                            body: JSON.stringify({ clientes: ids, mensaje: msg, tipo: 'precios' })
                         }).then(() => alert("Campaña iniciada con pausas anti-bloqueo."));
                     }
                 }
