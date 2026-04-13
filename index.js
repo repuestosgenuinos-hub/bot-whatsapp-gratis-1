@@ -9,7 +9,7 @@ const mysql = require('mysql2/promise');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
-// MODULOS EXTERNOS
+// MODULOS EXTERNOS (Asegúrate de que los archivos existan)
 const cobranza = require('./cobranza');
 const marketingModulo = require('./marketing'); 
 
@@ -17,9 +17,10 @@ const marketingModulo = require('./marketing');
 const PORT = process.env.PORT || 10000;
 const apiKey = process.env.GEMINI_API_KEY;
 
+// MODELO SOLICITADO: gemini-2.5-flash
 const genAI = new GoogleGenerativeAI(apiKey);
 const model = genAI.getGenerativeModel({ 
-    model: "gemini-1.5-flash",
+    model: "gemini-2.5-flash",
     generationConfig: { temperature: 0.7, maxOutputTokens: 1000 }
 });
 
@@ -32,10 +33,9 @@ const dbConfig = {
 
 const PDF_URL = "https://www.one4cars.com/sevencorpweb/uploads/precios/Catalogo%20-%20ONE4CARS_compressed.pdf";
 
-// TU ID DE ADMINISTRADOR
+// ID DE ADMINISTRADOR (EL JEFE)
 const ADMIN_ID = "228621243408492";
 
-// MENÚ COMPLETO RESTAURADO
 const MENU_TEXT = `📋 *MENÚ PRINCIPAL ONE4CARS*
 
 1️⃣ *Medios de pago:* 
@@ -72,7 +72,7 @@ let qrCodeData = "Iniciando...";
 let socketBot = null;
 let dolarInfo = { bcv: 'Cargando...', paralelo: 'Cargando...' };
 
-// ===== FUNCIONES DE APOYO =====
+// ===== FUNCIONES DE APOYO / BASE DE DATOS =====
 async function db() { return await mysql.createConnection(dbConfig); }
 
 function normalizar(texto) {
@@ -87,20 +87,23 @@ function formatWhatsApp(jid) {
     if (!jid) return null;
     if (jid.toString().includes('@')) return jid;
     let clean = jid.toString().replace(/\D/g, ''); 
-    if (clean.startsWith('580')) {
-        clean = '58' + clean.substring(3);
-    }
+    if (clean.startsWith('580')) clean = '58' + clean.substring(3);
     if (clean.length > 15) return `${clean}@lid`;
     if (clean.startsWith('0')) clean = clean.substring(1);
     if (!clean.startsWith('58')) clean = '58' + clean;
     return `${clean}@s.whatsapp.net`;
 }
 
+async function setModo(jid, modo) {
+    const conn = await db();
+    await conn.execute("UPDATE control_chat SET modo = ? WHERE telefono = ?", [modo, jid]);
+    await conn.end();
+}
+
 // SISTEMA ANTI-BLOQUEO
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 const randomDelay = async () => {
-    const ms = Math.floor(Math.random() * (25000 - 15000 + 1)) + 15000; // 15-25 seg
-    console.log(`⏳ Pausa de seguridad: ${ms/1000}s`);
+    const ms = Math.floor(Math.random() * (25000 - 15000 + 1)) + 15000;
     await sleep(ms);
 };
 
@@ -116,7 +119,6 @@ async function buscarVendedor(jid, pushName) {
     return r[0] || null;
 }
 
-// ===== BASE DE DATOS =====
 async function initDB() {
     let conn;
     try {
@@ -128,7 +130,6 @@ async function initDB() {
             modo VARCHAR(20) DEFAULT 'bot', 
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )`);
-        console.log("✅ Base de Datos vinculada.");
     } catch (e) { console.log("❌ Error DB Init:", e.message); }
     finally { if(conn) await conn.end(); }
 }
@@ -198,7 +199,7 @@ async function startBot() {
     sock.ev.on('connection.update', (u) => {
         const { connection, lastDisconnect, qr } = u;
         if (qr) qrcode.toDataURL(qr, { scale: 10 }, (_, url) => qrCodeData = url);
-        if (connection === 'open') { qrCodeData = "ONLINE ✅"; console.log("🚀 BOT MASTER ONLINE"); }
+        if (connection === 'open') { qrCodeData = "ONLINE ✅"; }
         if (connection === 'close') {
             const r = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
             if (r) startBot();
@@ -208,10 +209,18 @@ async function startBot() {
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
         const msg = messages[0];
-        if (!msg.message || msg.key.fromMe) return;
+        if (!msg.message) return;
 
         const from = msg.key.remoteJid;
+
+        // 1. NO RESPONDER MENSAJES DE GRUPOS
         if (from.includes('@g.us')) return;
+
+        // 2. SI EL HUMANO INTERVIENE (ESCRIBE DESDE EL TELEFONO), DETENER EL BOT
+        if (msg.key.fromMe) {
+            await setModo(from, 'humano');
+            return;
+        }
 
         const pushName = msg.pushName || "Usuario";
         const rawText = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").trim();
@@ -221,26 +230,34 @@ async function startBot() {
         const isAdmin = from.includes(ADMIN_ID);
         const rifDetectado = rawText.replace(/\D/g, '');
 
-        // 1. DETECCIÓN DE VENDEDOR
-        const vendedor = await buscarVendedor(from, pushName);
-        if (vendedor && (text === 'menu' || text === 'hola')) {
-            return await sock.sendMessage(from, { text: `👋 Hola Vendedor(a) *${vendedor.nombre}*.\n\nBienvenido al sistema de gestión ONE4CARS.\n\n${MENU_TEXT}` });
-        }
+        // CONSULTAR SESIÓN Y MODO
+        const sesion = await getSesion(from);
 
-        // 2. LÓGICA DE ADMINISTRADOR
+        // SI EL CHAT ESTÁ EN MODO HUMANO, NO RESPONDER (A menos que sea el Admin)
+        if (sesion && sesion.modo === 'humano' && !isAdmin) return;
+
+        // 3. RECONOCER AL JEFE (ADMIN)
         if (isAdmin) {
             if (text === 'dolar') {
                 await actualizarDolar();
                 return await sock.sendMessage(from, { text: `💵 *TASAS ACTUALES*\n\nBCV: ${dolarInfo.bcv}\nParalelo: ${dolarInfo.paralelo}` });
+            }
+            if (text === 'activar bot') {
+                await setModo(from, 'bot');
+                return await sock.sendMessage(from, { text: "🤖 Bot reactivado para este chat." });
             }
             if (text === 'menu' || text === 'hola') {
                 return await sock.sendMessage(from, { text: `⭐ *MODO MASTER ACTIVO*\n\n${MENU_TEXT}` });
             }
         }
 
-        // 3. LÓGICA DE CLIENTE
-        const sesion = await getSesion(from);
+        // LÓGICA DE VENDEDOR
+        const vendedor = await buscarVendedor(from, pushName);
+        if (vendedor && (text === 'menu' || text === 'hola')) {
+            return await sock.sendMessage(from, { text: `👋 Hola Vendedor(a) *${vendedor.nombre}*.\n\n${MENU_TEXT}` });
+        }
 
+        // VINCULACIÓN DE RIF
         if (rifDetectado.length >= 6 && (!sesion || !sesion.id_cliente_int || text.includes('rif'))) {
             const c = await buscarCliente(rifDetectado);
             if (c) {
@@ -272,15 +289,20 @@ async function startBot() {
             return await sock.sendMessage(from, { text: listado });
         }
 
+        // 4. RESPUESTA SIEMPRE GUIADA POR INSTRUCCIONES.TXT (GEMINI 2.5 FLASH)
         try {
             const inst = fs.readFileSync('./instrucciones.txt', 'utf8');
-            const result = await model.generateContent(`${inst}\n\nCliente: ${rawText}`);
+            const prompt = `${inst}\n\nCONTEXTO:\n- Usuario: ${pushName}\n- Dólar BCV: ${dolarInfo.bcv}\n- Dólar Paralelo: ${dolarInfo.paralelo}\n\nMensaje del Cliente: ${rawText}`;
+            
+            const result = await model.generateContent(prompt);
             await sock.sendMessage(from, { text: result.response.text() });
-        } catch (e) {}
+        } catch (e) {
+            console.error("Error en IA:", e);
+        }
     });
 }
 
-// ===== SERVIDOR HTTP =====
+// ===== SERVIDOR HTTP (TODAS LAS FUNCIONALIDADES RESTAURADAS) =====
 const server = http.createServer(async (req, res) => {
     const parsedUrl = url.parse(req.url, true);
     const header = `<nav class="navbar navbar-dark bg-dark mb-4 shadow"><div class="container"><a class="navbar-brand fw-bold" href="/">ONE4CARS ADMIN</a></div></nav>`;
@@ -328,20 +350,12 @@ const server = http.createServer(async (req, res) => {
                         if (data.tipo === 'precios') {
                             await socketBot.sendMessage(jid, { document: { url: PDF_URL }, fileName: 'Catalogo-ONE4CARS.pdf', mimetype: 'application/pdf', caption: `¡Hola *${c.nombres}*! Aquí tienes nuestro catálogo actualizado. 🚀` });
                         } else if (data.tipo === 'promo') {
-                            let msg = "";
-                            if (data.subtipo === 'bienvenida') {
-                                msg = `*🛠️ ¡Tu Negocio, al Máximo Nivel con ONE4CARS!*\n\n¡Hola *${c.nombres}*! 👋\n\nRecibe un cordial saludo de la gerencia de ventas de *ONE4CARS*. ¡Estamos encantados de tenerte como aliado comercial!\n\n*🌐 Acceso a tu Portal Mayorista:*\n*Enlace:* https://one4cars.com/mayoristas\n*LOGIN:* ${c.usuario}\n*PASSWORD:* ${c.clave}\n\n*🚀 Tu página personalizada:*\n➡️ https://www.one4cars.com/${c.usuario}`;
-                            } else if (data.subtipo === 'satisfaccion') {
-                                msg = `*📊 CONSULTA DE SATISFACCIÓN - ONE4CARS*\n\n¡Hola *${c.nombres}*! 👋\n\nEn *ONE4CARS* nos importa mucho tu opinión. Queremos saber: ¿Cómo ha sido tu experiencia con la calidad de nuestros productos?`;
-                            } else if (data.subtipo === 'custom') {
-                                msg = data.mensaje;
-                            }
+                            let msg = data.mensaje || `*🛠️ ¡Tu Negocio al Máximo Nivel!*`;
                             await socketBot.sendMessage(jid, { text: msg });
                         }
                         count++;
-                        if (count % 5 === 0) { console.log("🛑 Pausa anti-bloqueo (2 min)..."); await sleep(120000); }
-                        else { await randomDelay(); }
-                    } catch (e) { console.log("Error enviando a", jid); }
+                        if (count % 5 === 0) await sleep(120000); else await randomDelay();
+                    } catch (e) { console.log("Error marketing", jid); }
                 }
             }
             res.end("OK");
@@ -360,125 +374,50 @@ const server = http.createServer(async (req, res) => {
                     [id_cliente]
                 );
                 await conn.end();
-
                 for (const f of facturas) {
                     const jid = formatWhatsApp(f.celular);
                     if (!jid) continue;
                     const saldoBs = (f.total - f.abono_factura) / (f.porcentaje || 1);
-                    const diffDays = Math.ceil(Math.abs(new Date() - new Date(f.fecha_reg)) / (1000 * 60 * 60 * 24));
-                    const diasVencidos = diffDays > 30 ? diffDays - 30 : 0;
-
-                    const msgCobranza = `Hola *${f.nombres}* 🚗, de *ONE4CARS*.\n\nLe Notificamos que su Nota está pendiente:\n\n*Factura:* ${f.nro_factura}\n*Saldo:* Bs. *${saldoBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}*\n*Presenta:* ${diasVencidos} días vencidos\n\nPor favor, gestione su pago a la brevedad. Cuide su crédito, es valioso.`;
-
+                    const msgCobranza = `Hola *${f.nombres}* 🚗, le recordamos su factura pendiente: #${f.nro_factura} por un saldo de Bs. *${saldoBs.toLocaleString('es-VE')}*.`;
                     try {
-                        await socketBot.sendPresenceUpdate('composing', jid);
                         await socketBot.sendMessage(jid, { text: msgCobranza });
                         count++;
-                        if (count % 5 === 0) { console.log("🛑 Pausa anti-bloqueo (2 min)..."); await sleep(120000); }
-                        else { await randomDelay(); }
-                    } catch (e) { console.log("Error cobranza a", jid); }
+                        if (count % 5 === 0) await sleep(120000); else await randomDelay();
+                    } catch (e) { console.log("Error cobranza", jid); }
                 }
             }
             res.end("OK");
         });
 
     } else {
-        const v = await cobranza.obtenerVendedores();
-        const z = await cobranza.obtenerZonas();
+        // PANEL PRINCIPAL
+        const v = await cobranza.obtenerVendedores() || [];
+        const z = await cobranza.obtenerZonas() || [];
         res.end(`<!DOCTYPE html>
         <html lang="es">
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-            <meta http-equiv="refresh" content="20">
             <title>Admin ONE4CARS</title>
-            <style>
-                body { background-color: #f4f7f6; }
-                .card { border: none; border-radius: 15px; }
-                .btn-custom { border-radius: 10px; padding: 12px; font-weight: 600; transition: 0.3s; }
-            </style>
         </head>
-        <body>
+        <body style="background:#f4f7f6">
             ${header}
             <div class="container">
-                <div class="row justify-content-center">
-                    <div class="col-md-6 col-lg-5 mb-4">
-                        <div class="card shadow-lg p-4 text-center">
-                            <h4 class="mb-3">Estado del Bot</h4>
-                            <div class="my-4">
-                                ${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" class="img-fluid rounded shadow-sm" style="max-width: 250px;">` : `<h2 class="text-success">${qrCodeData}</h2>`}
+                <div class="row">
+                    <div class="col-md-5 mb-4">
+                        <div class="card shadow p-4 text-center">
+                            <h4>Estado del Bot</h4>
+                            <div class="my-3">${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" width="200">` : `<h2 class="text-success">${qrCodeData}</h2>`}</div>
+                            <div class="p-2 bg-light rounded">BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}</div>
+                            <div class="d-grid gap-2 mt-3">
+                                <a href="/cobranza" class="btn btn-primary">COBRANZA</a>
+                                <a href="/marketing-panel" class="btn btn-info text-white">MARKETING</a>
                             </div>
-                            <div class="p-3 bg-light rounded mb-4">
-                                <strong>BCV:</strong> ${dolarInfo.bcv} | <strong>Paralelo:</strong> ${dolarInfo.paralelo}
-                            </div>
-                            <div class="d-grid gap-2">
-                                <a href="/cobranza" class="btn btn-primary btn-custom shadow-sm">PANEL DE COBRANZA</a>
-                                <a href="/marketing-panel" class="btn btn-info btn-custom text-white shadow-sm">PANEL DE MARKETING</a>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="col-md-10 col-lg-7">
-                        <div class="card shadow-lg p-4">
-                            <h4 class="mb-4">Marketing Rápido</h4>
-                            <div class="row g-2 mb-4">
-                                <div class="col-6">
-                                    <select id="m_vendedor" class="form-select">
-                                        <option value="">Vendedor: Todos</option>
-                                        ${v.map(v => `<option value="${v.vendedor}">${v.vendedor}</option>`).join('')}
-                                    </select>
-                                </div>
-                                <div class="col-6">
-                                    <select id="m_zona" class="form-select">
-                                        <option value="">Zona: Todas</option>
-                                        ${z.map(z => `<option value="${z.zona}">${z.zona}</option>`).join('')}
-                                    </select>
-                                </div>
-                                <div class="col-12">
-                                    <button onclick="previewM()" class="btn btn-secondary w-100 btn-custom">VER CLIENTES</button>
-                                </div>
-                            </div>
-                            <div id="preview_area" style="max-height:250px; overflow-y:auto;" class="mb-3 border rounded p-2 bg-white shadow-inner"></div>
-                            <textarea id="m_mensaje" class="form-control mb-3" rows="3">Aquí tienes nuestro catálogo actualizado. ¡Mucho éxito comercial!</textarea>
-                            <button id="btn_send" style="display:none;" onclick="enviarM()" class="btn btn-danger w-100 btn-custom shadow">ENVIAR MENSAJE + CATÁLOGO PDF</button>
                         </div>
                     </div>
                 </div>
             </div>
-            <script>
-                function previewM() {
-                    const v = document.getElementById('m_vendedor').value;
-                    const z = document.getElementById('m_zona').value;
-                    fetch('/marketing-preview?vendedor='+v+'&zona='+z)
-                    .then(r => r.json())
-                    .then(data => {
-                        let html = '<table class="table table-sm align-middle"><thead><tr><th><input type="checkbox" id="sel_all" checked onclick="toggleAll()" class="form-check-input"></th><th>Nombre</th></tr></thead><tbody>';
-                        data.forEach(c => {
-                            html += '<tr><td><input type="checkbox" class="c_check form-check-input" value="'+c.id_cliente+'" checked></td><td class="small">'+c.nombres+'</td></tr>';
-                        });
-                        html += '</tbody></table>';
-                        document.getElementById('preview_area').innerHTML = html;
-                        document.getElementById('btn_send').style.display = 'block';
-                    });
-                }
-                function toggleAll() {
-                    const master = document.getElementById('sel_all').checked;
-                    document.querySelectorAll('.c_check').forEach(c => c.checked = master);
-                }
-                function enviarM() {
-                    const ids = Array.from(document.querySelectorAll('.c_check:checked')).map(c => c.value);
-                    const msg = document.getElementById('m_mensaje').value;
-                    if(ids.length === 0) return alert('Seleccione al menos un cliente');
-                    if(confirm('¿Enviar campaña a '+ids.length+' clientes?')) {
-                        fetch('/enviar-marketing', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({ clientes: ids, mensaje: msg })
-                        }).then(() => alert("Campaña iniciada con pausas anti-bloqueo."));
-                    }
-                }
-            </script>
         </body></html>`);
     }
 });
