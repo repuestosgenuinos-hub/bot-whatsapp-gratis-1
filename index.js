@@ -72,9 +72,6 @@ async function safeSendMessage(jid, content) {
         console.log(`[MSG] ✅ Mensaje enviado a ${jid}`);
     } catch (e) {
         console.log(`[MSG] ❌ Error enviando mensaje:`, e.message);
-        if (e.message.includes("Connection Closed") || e.message.includes("Bad MAC")) {
-            console.log("🚨 SESIÓN CORRUMPIDA. Por favor, borra la carpeta 'auth_info' y reinicia el bot para escanear el QR de nuevo.");
-        }
     }
 }
 
@@ -175,44 +172,32 @@ async function buscarProductoPorTexto(texto) {
         
     if (palabras.length === 0) return null;
 
-    let query = "SELECT producto, descripcion, tipo FROM tab_productos WHERE ";
+    // ACTUALIZADO: Ahora seleccionamos precio_minimo
+    let query = "SELECT producto, descripcion, tipo, precio_minimo FROM tab_productos WHERE ";
     
-    // Intento 1: Estricto
     let conditions = palabras.map(() => "descripcion LIKE ?").join(" AND ");
     let params = palabras.map(p => `%${p}%`);
     
     try {
         const [rows] = await pool.execute(query + conditions + " LIMIT 5", params);
-        if (rows.length > 0) {
-            console.log(`[DB] ✅ Producto encontrado en Intento Estricto`);
-            return rows;
-        }
+        if (rows.length > 0) return rows;
     } catch (e) { console.log("Error SQL 1:", e); }
 
-    // Intento 2: Flexible
     if (palabras.length > 2) {
         const pFlex = palabras.slice(0, 2);
         const cFlex = pFlex.map(() => "descripcion LIKE ?").join(" AND ");
         const vFlex = pFlex.map(p => `%${p}%`);
         try {
             const [rows] = await pool.execute(query + cFlex + " LIMIT 5", vFlex);
-            if (rows.length > 0) {
-                console.log(`[DB] ✅ Producto encontrado en Intento Flexible`);
-                return rows;
-            }
+            if (rows.length > 0) return rows;
         } catch (e) {}
     }
 
-    // Intento 3: Global
     try {
-        const [rows] = await pool.execute("SELECT producto, descripcion, tipo FROM tab_productos WHERE descripcion LIKE ? LIMIT 5", [`%${txtNormal}%`]);
-        if (rows.length > 0) {
-            console.log(`[DB] ✅ Producto encontrado en Intento Global`);
-            return rows;
-        }
+        const [rows] = await pool.execute("SELECT producto, descripcion, tipo, precio_minimo FROM tab_productos WHERE descripcion LIKE ? LIMIT 5", [`%${txtNormal}%`]);
+        if (rows.length > 0) return rows;
     } catch (e) {}
 
-    console.log(`[DB] ❌ No se encontró producto para: ${txtNormal}`);
     return null;
 }
 
@@ -303,15 +288,15 @@ async function startBot() {
             try {
                 const prods = await buscarProductoPorTexto(rawText);
                 if (prods) {
-                    console.log(`[IA] 🤖 Generando respuesta con Gemini...`);
                     const inst = fs.readFileSync('./instrucciones.txt', 'utf8');
                     const historial = await obtenerHistorial(from);
                     
                     let dataProductos = "\n\nDATOS REALES DE STOCK:\n";
                     prods.forEach(p => {
-                        dataProductos += `CÓDIGO: ${p.producto} | TIPO: ${p.tipo} | DESCRIPCIÓN: ${p.descripcion} | LINK: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n`;
+                        // ACTUALIZADO: Se agrega el precio_minimo al contexto de la IA
+                        dataProductos += `CÓDIGO: ${p.producto} | TIPO: ${p.tipo} | DESCRIPCIÓN: ${p.descripcion} | PRECIO MÍNIMO: $${p.precio_minimo} | LINK: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n`;
                     });
-                    dataProductos += `\nINSTRUCCIÓN: El cliente pregunta "${rawText}". Usa la DESCRIPCIÓN para responder si es lisa, acanalada o cuánto mide. SIEMPRE entrega el LINK al final.`;
+                    dataProductos += `\nINSTRUCCIÓN: El cliente pregunta "${rawText}". Usa la DESCRIPCIÓN para responder si es lisa, acanalada o cuánto mide, y menciona el PRECIO MÍNIMO. SIEMPRE entrega el LINK al final.`;
 
                     const prompt = `INSTRUCCIONES:\n${inst}\n\nCONTEXTO:\nDólar BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}\nUsuario: ${pushName}${dataProductos}\n\nHISTORIAL:\n${historial}\n\nMENSAJE: ${rawText}`;
                     
@@ -322,10 +307,10 @@ async function startBot() {
                         return await safeSendMessage(from, { text: rIA });
                     } catch (aiError) {
                         console.log(`[IA] ❌ Error en Gemini, usando respuesta de emergencia...`);
-                        // RESPUESTA DE EMERGENCIA (Si la IA falla, enviamos el link directo)
+                        // ACTUALIZADO: Se agrega el precio al mensaje de emergencia
                         let emergencyMsg = `✅ ¡Hola ${pushName}! Tenemos productos relacionados:\n\n`;
                         prods.forEach(p => {
-                            emergencyMsg += `📦 *${p.descripcion}*\n🔗 Ficha técnica: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n\n`;
+                            emergencyMsg += `📦 *${p.descripcion}*\n💰 Precio: $${p.precio_minimo}\n🔗 Ficha técnica: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n\n`;
                         });
                         return await safeSendMessage(from, { text: emergencyMsg });
                     }
