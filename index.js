@@ -177,23 +177,39 @@ async function buscarCliente(rifLimpio) {
     return r[0] || null;
 }
 
-// BÚSQUEDA DE PRODUCTOS (Prioridad de palabras clave)
+// BÚSQUEDA DE PRODUCTOS (Optimizado con puntuación de palabras clave para evitar fallos por condiciones conversacionales)
 async function buscarProductoPorTexto(texto) {
     const txtNormal = normalizar(texto);
-    const stopWords = ['tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde', 'precio', 'tienen', 'el', 'una', 'un', 'hay'];
+    const stopWords = [
+        'tienes', 'la', 'del', 'quiere', 'quiero', 'saber', 'cuanto', 'mide', 'venden', 'donde', 
+        'precio', 'tienen', 'el', 'una', 'un', 'hay', 'por', 'favor', 'hola', 'buen', 'dia', 
+        'buenas', 'tardes', 'me', 'podrias', 'decir', 'si', 'es', 'con', 'para', 'de', 'los', 'las',
+        'que', 'cual', 'o', 'y', 'en', 'tiene', 'tendran', 'medida', 'medidas', 'saben', 'existen'
+    ];
     
-    const palabras = txtNormal.split(' ')
+    const palabras = txtNormal.split(/\s+/)
         .filter(p => p.length > 2 && !stopWords.includes(p));
         
     if (palabras.length === 0) return null;
 
     const conn = await db();
-    let query = "SELECT producto, descripcion, tipo FROM tab_productos WHERE ";
-    let conditions = palabras.map(() => "descripcion LIKE ?").join(" AND ");
-    let params = palabras.map(p => `%${p}%`);
+    
+    // Generamos un query con un sistema de puntuación dinámico para priorizar los mejores aciertos
+    let selectScore = palabras.map(() => "IF(descripcion LIKE ?, 1, 0)").join(" + ");
+    let conditions = palabras.map(() => "descripcion LIKE ?").join(" OR ");
+    
+    let query = `SELECT producto, descripcion, tipo, (${selectScore}) as score 
+                 FROM tab_productos 
+                 WHERE ${conditions} 
+                 ORDER BY score DESC 
+                 LIMIT 5`;
+
+    let params = [];
+    palabras.forEach(p => params.push(`%${p}%`)); // Parámetros para las cláusulas IF del selectScore
+    palabras.forEach(p => params.push(`%${p}%`)); // Parámetros para las condiciones del WHERE
 
     try {
-        const [rows] = await conn.execute(query + conditions + " LIMIT 5", params);
+        const [rows] = await conn.execute(query, params);
         await conn.end();
         return rows.length > 0 ? rows : null;
     } catch (e) {
@@ -287,9 +303,8 @@ async function startBot() {
         if (sesion && sesion.modo === 'humano' && !isAdmin) return;
 
         // --- 1. LÓGICA DE PRODUCTOS (PRIORIDAD ALTA PARA TODOS, INCLUYENDO JEFE) ---
-        // Si el texto contiene palabras clave pero NO es un RIF puro
         const esRIFPuro = soloNumeros.length >= 6 && /^\d+$/.test(soloNumeros);
-        const palabrasClaveProd = ["tienes", "hay", "polea", "corsa", "bomba", "filtro", "disponible", "precio"];
+        const palabrasClaveProd = ["tienes", "hay", "polea", "corsa", "bomba", "filtro", "disponible", "precio", "mide", "medida", "medidas", "lisa", "acanalada", "cuanto", "buscar"];
         const pareceConsultaProd = palabrasClaveProd.some(p => text.includes(p));
 
         if (pareceConsultaProd && !esRIFPuro) {
@@ -298,13 +313,14 @@ async function startBot() {
                 const historial = await obtenerHistorial(from);
                 let dataProductos = "";
                 const prods = await buscarProductoPorTexto(rawText);
+                
                 if (prods) {
                     dataProductos = "\n\nSTOCK ENCONTRADO EN TABLA PRODUCTOS:\n";
                     prods.forEach(p => {
-                        dataProductos += `- CÓDIGO: ${p.producto} | TIPO: ${p.tipo} | DESC: ${p.descripcion}\n`;
+                        dataProductos += `- CÓDIGO (PRODUCTO): ${p.producto} | TIPO: ${p.tipo} | DESC: ${p.descripcion}\n`;
                         dataProductos += `- FICHA: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n\n`;
                     });
-                    dataProductos += "Informa que el producto está disponible y adjunta el link de la ficha técnica.";
+                    dataProductos += "\nINSTRUCCIÓN ADICIONAL PARA LA IA: Responde de forma explícita al cliente sobre su consulta de producto. Analiza detenidamente el texto de las descripciones provistas arriba ya que allí se detallan las compatibilidades vehiculares, características (como si es lisa o acanalada) y medidas físicas (por ejemplo, expresiones como '70x26x17' indican las medidas). Si el cliente pregunta específicamente si es de un tipo o pide las medidas, extrae ese dato exacto de la descripción que te proveo, menciónalo en tu respuesta de forma clara y amable, y proporciona siempre el respectivo link de la ficha técnica.";
                 }
 
                 const prompt = `INSTRUCCIONES:\n${inst}\n\nCONTEXTO:\nDólar BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}\nUsuario: ${pushName}${dataProductos}\n\nHISTORIAL:\n${historial}\n\nMENSAJE: ${rawText}`;
