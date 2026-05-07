@@ -1,3 +1,5 @@
+--- START OF FILE index (13).js ---
+
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode');
@@ -261,10 +263,13 @@ async function startBot() {
 
         if (msg.key.fromMe) {
             const textMe = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").toLowerCase();
+            
+            // COMANDO PARA REACTIVAR EL BOT (Cualquier operador o el Jefe Admin puede usarlo)
             if (textMe === '!bot') {
                 await setModo(from, 'bot');
-                await safeSendMessage(from, { text: "🤖 IA Reactivada para este chat." });
+                await safeSendMessage(from, { text: "🤖 *IA Reactivada:* El bot volverá a responder automáticamente en este chat." });
             } else if (!isAdmin) {
+                // Si el que escribe no es el Administrador Jefe, el bot se apaga para dar paso al humano
                 await setModo(from, 'humano');
             }
             return;
@@ -321,19 +326,22 @@ async function startBot() {
                         finalResponseText = emergencyMsg;
                     }
 
-                    // LÓGICA DE IMAGEN (Ahora fuera de la IA, se ejecuta siempre que haya productos)
-                    const firstProd = prods[0];
-                    const imgUrl = `https://one4cars.com/imagen/${firstProd.producto}.jpg`;
-                    
-                    try {
-                        await socketBot.sendMessage(from, { 
-                            image: { url: imgUrl }, 
-                            caption: finalResponseText 
-                        });
-                        console.log(`[MSG] ✅ Imagen y texto enviados a ${from}`);
-                    } catch (imgErr) {
-                        console.log(`[MSG] ⚠️ Imagen no disponible o error, enviando solo texto.`);
-                        await safeSendMessage(from, { text: finalResponseText });
+                    // SOLUCIÓN: Enviar primero el texto y luego las imágenes de TODOS los productos encontrados
+                    await safeSendMessage(from, { text: finalResponseText });
+
+                    // Limitamos a las primeras 3 imágenes para no saturar el chat
+                    const imagenesAEnviar = prods.slice(0, 3);
+                    for (const p of imagenesAEnviar) {
+                        const imgUrl = `https://one4cars.com/imagen/${p.producto}.jpg`;
+                        try {
+                            await socketBot.sendMessage(from, { 
+                                image: { url: imgUrl }, 
+                                caption: `📦 *CÓDIGO: ${p.producto}*\n📝 ${p.descripcion}` 
+                            });
+                            await sleep(1000); // Pequeña pausa entre imágenes
+                        } catch (imgErr) {
+                            console.log(`[MSG] ⚠️ Imagen no disponible para producto ${p.producto}`);
+                        }
                     }
                     return;
                 }
