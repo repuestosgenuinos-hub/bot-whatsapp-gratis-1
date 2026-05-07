@@ -7,7 +7,6 @@ const pino = require('pino');
 const fs = require('fs');
 const mysql = require('mysql2/promise');
 const axios = require('axios');
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 // MODULOS EXTERNOS
 const cobranza = require('./cobranza');
@@ -15,13 +14,6 @@ const marketingModulo = require('./marketing');
 
 // CONFIGURACION
 const PORT = process.env.PORT || 10000;
-const apiKey = process.env.GEMINI_API_KEY;
-
-const genAI = new GoogleGenerativeAI(apiKey);
-const model = genAI.getGenerativeModel({ 
-    model: "gemini-1.5-flash", 
-    generationConfig: { temperature: 0.1, maxOutputTokens: 1000 } 
-});
 
 const pool = mysql.createPool({
     host: 'one4cars.com',
@@ -102,13 +94,6 @@ async function guardarMensaje(tel, rol, contenido) {
     } catch (e) { console.log("Error guardando historial"); }
 }
 
-async function obtenerHistorial(tel) {
-    try {
-        const [rows] = await pool.execute("SELECT rol, contenido FROM historial_chat WHERE telefono = ? ORDER BY fecha ASC LIMIT 10", [tel]);
-        return rows.map(r => `${r.rol === 'user' ? 'Cliente' : 'Bot'}: ${r.contenido}`).join("\n");
-    } catch (e) { return ""; }
-}
-
 async function setModo(tel, modo) {
     await pool.execute("INSERT INTO control_chat (telefono, modo) VALUES (?, ?) ON DUPLICATE KEY UPDATE modo = VALUES(modo)", [tel, modo]);
 }
@@ -159,8 +144,7 @@ async function guardarUsuario(jid, usuario, id_int) {
 }
 
 async function buscarCliente(rifLimpio) {
-    const soloNumeros = rifLimpio.replace(/\D/g, '');
-    const [r] = await pool.execute("SELECT id_cliente, nombres, celular, cedula, direccion, zona FROM tab_clientes WHERE clave = ? OR clave LIKE ? LIMIT 1", [soloNumeros, `%${soloNumeros}%`]);
+    const [r] = await pool.execute("SELECT id_cliente, nombres, celular, cedula, direccion, zona FROM tab_clientes WHERE clave = ? OR clave LIKE ? LIMIT 1", [rifLimpio, `%${rifLimpio}%`]);
     return r[0] || null;
 }
 
@@ -174,7 +158,6 @@ async function buscarProductoPorTexto(texto) {
     if (palabras.length === 0) return null;
 
     let query = "SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ";
-    
     let conditions = palabras.map(() => "descripcion LIKE ?").join(" AND ");
     let params = palabras.map(p => `%${p}%`);
     
@@ -264,7 +247,7 @@ async function startBot() {
             const textMe = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").toLowerCase();
             if (textMe === '!bot') {
                 await setModo(from, 'bot');
-                await safeSendMessage(from, { text: "🤖 *IA Reactivada:* El bot volverá a responder automáticamente en este chat." });
+                await safeSendMessage(from, { text: "🤖 Bot reactivado para este chat." });
             } else if (!isAdmin) {
                 await setModo(from, 'humano');
             }
@@ -276,83 +259,44 @@ async function startBot() {
         if (!rawText) return;
 
         const text = normalizar(rawText);
-        const rifSoloNumeros = rawText.replace(/\D/g, '');
-        const esRIFPuro = rifSoloNumeros.length >= 6 && rawText.length <= 15;
-
-        console.log(`[LOG] Recibido de ${pushName} (${from}): "${rawText}"`);
+        const esRIFPuro = /^\d+$/.test(rawText.replace(/\s/g, '')) && rawText.length >= 6;
 
         await guardarMensaje(from, 'user', rawText);
 
         const sesion = await getSesion(from);
-        if (sesion && sesion.modo === 'humano' && !isAdmin) {
-            console.log(`[LOG] 👤 Chat en modo HUMANO. Bot ignora mensaje.`);
-            return;
-        }
+        if (sesion && sesion.modo === 'humano' && !isAdmin) return;
 
-        // --- 1. SALUDOS Y MENÚ (Prioridad para que el cliente siempre reciba algo) ---
-        if (text === 'menu' || text === 'hola' || text === 'buen dia') {
-            if (vendedor) {
-                return await safeSendMessage(from, { text: `👋 Hola *${vendedor.nombre}*.\n\n${MENU_TEXT}` });
-            } else if (isAdmin) {
-                return await safeSendMessage(from, { text: `⭐ *MODO ADMINISTRADOR*\n\n${MENU_TEXT}` });
-            } else {
-                return await safeSendMessage(from, { text: `👋 ¡Hola ${pushName}!\n\n${MENU_TEXT}` });
-            }
-        }
-
-        // --- 2. LÓGICA DE PRODUCTOS ---
-        if (!esRIFPuro) {
+        // --- 1. LÓGICA DE PRODUCTOS (SIN API) ---
+        if (!esRIFPuro && text !== 'menu' && text !== 'hola') {
             try {
                 const prods = await buscarProductoPorTexto(rawText);
                 if (prods) {
-                    console.log(`[LOG] 📦 Productos encontrados para: ${rawText}`);
-                    const inst = fs.readFileSync('./instrucciones.txt', 'utf8');
-                    const historial = await obtenerHistorial(from);
+                    // Construimos la respuesta general llamativa
+                    let generalText = `✅ ¡Hola ${pushName}! Encontramos los siguientes productos relacionados:\n\n`;
                     
-                    let dataProductos = "\n\nDATOS REALES DE STOCK:\n";
                     prods.forEach(p => {
                         const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
-                        dataProductos += `CÓDIGO: ${p.producto} | TIPO: ${p.tipo} | DESCRIPCIÓN: ${p.descripcion} | PRECIO FINAL: $${precioLimpio} | LINK: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n`;
+                        generalText += `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio Final: $${precioLimpio}*\n📝 ${p.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n\n`;
                     });
-                    
-                    dataProductos += `\n\n⚠️ REGLA OBLIGATORIA DE FORMATO:
-                    1. DEBES empezar la respuesta con el código de la pieza de forma muy llamativa. Ejemplo: *📦 CÓDIGO: [codigo]*
-                    2. EL PRECIO FINAL DEBE SER LLAMATIVO. Usa este formato exacto: *💰 Precio Final: $XX.XX* (en negrita y con emoji).
-                    3. Usa solo 2 decimales para el precio.
-                    4. Luego indica si está disponible y menciona las medidas si existen en la descripción.
-                    5. SIEMPRE termina con el LINK de la ficha técnica.`;
 
-                    const prompt = `INSTRUCCIONES:\n${inst}\n\nCONTEXTO:\nDólar BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}\nUsuario: ${pushName}${dataProductos}\n\nHISTORIAL:\n${historial}\n\nMENSAJE: ${rawText}`;
-                    
-                    let finalResponseText = "";
-
-                    try {
-                        const result = await model.generateContent(prompt);
-                        finalResponseText = result.response.text();
-                        await guardarMensaje(from, 'model', finalResponseText);
-                    } catch (aiError) {
-                        console.log(`[IA] ❌ Error Gemini:`, aiError.message);
-                        let emergencyMsg = `✅ ¡Hola ${pushName}! Tenemos productos relacionados:\n\n`;
-                        prods.forEach(p => {
-                            const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
-                            emergencyMsg += `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio Final: $${precioLimpio}*\n📝 ${p.descripcion}\n🔗 Ficha técnica: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n\n`;
-                        });
-                        finalResponseText = emergencyMsg;
-                    }
-
-                    await safeSendMessage(from, { text: finalResponseText });
-
-                    const imagenesAEnviar = prods.slice(0, 3);
-                    for (const p of imagenesAEnviar) {
+                    // Enviamos las imágenes una por una
+                    for (let i = 0; i < prods.length; i++) {
+                        const p = prods[i];
                         const imgUrl = `https://one4cars.com/imagen/${p.producto}.jpg`;
+                        const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
+                        
+                        // El primer producto lleva el texto general, los demás un resumen
+                        const caption = (i === 0) 
+                            ? generalText 
+                            : `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio Final: $${precioLimpio}*`;
+
                         try {
                             await socketBot.sendMessage(from, { 
                                 image: { url: imgUrl }, 
-                                caption: `📦 *CÓDIGO: ${p.producto}*\n📝 ${p.descripcion}` 
+                                caption: caption 
                             });
-                            await sleep(1000);
                         } catch (imgErr) {
-                            console.log(`[MSG] ⚠️ Imagen no disponible para ${p.producto}`);
+                            if (i === 0) await safeSendMessage(from, { text: generalText });
                         }
                     }
                     return;
@@ -360,14 +304,17 @@ async function startBot() {
             } catch (e) { console.log("Error en flujo de productos:", e); }
         }
 
-        // --- 3. COMANDOS DE ADMINISTRADOR ---
+        // --- 2. COMANDOS DE ADMINISTRADOR ---
         if (isAdmin) {
             if (text === 'dolar') {
                 await actualizarDolar();
                 return await safeSendMessage(from, { text: `💵 BCV: ${dolarInfo.bcv}\n📈 Paralelo: ${dolarInfo.paralelo}` });
             }
+            if (text === 'menu' || text === 'hola' || text === 'buen dia') {
+                return await safeSendMessage(from, { text: `⭐ *MODO ADMINISTRADOR*\n\n${MENU_TEXT}` });
+            }
             if (esRIFPuro) {
-                const c = await buscarCliente(rifSoloNumeros);
+                const c = await buscarCliente(rawText.replace(/\s/g, ''));
                 if (c) {
                     const facturas = await obtenerDetalleFacturas(c.id_cliente);
                     let totalP = 0; 
@@ -389,15 +336,21 @@ async function startBot() {
             }
         }
 
-        // --- 4. VENDEDOR / CLIENTE (RIF) ---
+        // --- 3. VENDEDOR / CLIENTE ---
+        if (vendedor && (text === 'menu' || text === 'hola')) {
+            return await safeSendMessage(from, { text: `👋 Hola *${vendedor.nombre}*.\n\n${MENU_TEXT}` });
+        }
+
         if (esRIFPuro && (!sesion || !sesion.id_cliente_int) && !isAdmin) {
-            const c = await buscarCliente(rifSoloNumeros);
+            const c = await buscarCliente(rawText.replace(/\s/g, ''));
             if (c) {
-                await guardarUsuario(from, rifSoloNumeros, c.id_cliente);
+                await guardarUsuario(from, rawText.replace(/\s/g, ''), c.id_cliente);
                 return await safeSendMessage(from, { text: `✅ ¡Hola *${c.nombres}*! RIF vinculado.\n\n${MENU_TEXT}` });
             }
         }
 
+        if (text === 'menu') return await safeSendMessage(from, { text: MENU_TEXT });
+        
         if (text.includes("saldo") || text === '2') {
             const targetID = sesion?.id_cliente_int;
             if (!targetID) return await safeSendMessage(from, { text: "Por favor envíe su RIF para identificarse." });
@@ -415,19 +368,8 @@ async function startBot() {
             return await safeSendMessage(from, { text: listado });
         }
 
-        // --- 5. FALLBACK IA (Última instancia) ---
-        try {
-            console.log(`[LOG] Enviando mensaje de ${pushName} a la IA...`);
-            const inst = fs.readFileSync('./instrucciones.txt', 'utf8');
-            const prompt = `INSTRUCCIONES:\n${inst}\n\nDólar: ${dolarInfo.bcv}\nUsuario: ${pushName}\n\nMENSAJE: ${rawText}`;
-            const result = await model.generateContent(prompt);
-            const rIA = result.response.text();
-            await guardarMensaje(from, 'model', rIA);
-            await safeSendMessage(from, { text: rIA });
-        } catch (e) {
-            console.log(`[IA] ❌ Error Crítico IA:`, e.message);
-            await safeSendMessage(from, { text: `⚠️ Hola ${pushName}, en este momento mi sistema de inteligencia artificial está saturado. He notificado a un operador y te responderemos en breve. 🚗` });
-        }
+        // --- 4. FALLBACK (Sin IA) ---
+        await safeSendMessage(from, { text: "No pude encontrar ese producto. Por favor, verifica la descripción o escribe *menu* para ver las opciones." });
     });
 }
 
