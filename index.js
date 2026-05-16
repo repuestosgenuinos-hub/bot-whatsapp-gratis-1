@@ -1,4 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode');
 const http = require('http');
@@ -11,6 +11,7 @@ const axios = require('axios');
 // MODULOS EXTERNOS
 const cobranza = require('./cobranza');
 const marketingModulo = require('./marketing'); 
+const notificador = require('./notificador'); // <--- INTEGRACIÓN NOTIFICADOR
 
 // CONFIGURACION
 const PORT = process.env.PORT || 10000;
@@ -48,7 +49,30 @@ let qrCodeData = "Iniciando...";
 let socketBot = null;
 let dolarInfo = { bcv: 'Cargando...', paralelo: 'Cargando...' };
 
-// ===== FUNCIONES DE APOYO =====
+// ==========================================
+// NUEVA FUNCIÓN: SESIÓN EN MYSQL (ANTI-AMNESIA)
+// ==========================================
+async function useMySQLAuthState(pool) {
+    const loadCreds = async () => {
+        const [rows] = await pool.execute("SELECT data FROM whatsapp_session WHERE id = 'session_main'");
+        return rows.length > 0 ? JSON.parse(rows[0].data) : null;
+    };
+    const saveCreds = async (creds) => {
+        await pool.execute(
+            "INSERT INTO whatsapp_session (id, data) VALUES ('session_main', ?) ON DUPLICATE KEY UPDATE data = VALUES(data)", 
+            [JSON.stringify(creds)]
+        );
+    };
+    return {
+        state: { 
+            creds: await loadCreds(), 
+            keys: { get: async () => ({}), set: async () => {} } 
+        },
+        saveCreds
+    };
+}
+
+// ===== FUNCIONES DE APOYO (MANTENIDAS IGUAL) =====
 
 function normalizar(texto) {
     return texto
@@ -117,7 +141,7 @@ async function buscarVendedor(jid, pushName) {
     return r[0] || null;
 }
 
-// ===== BASE DE DATOS =====
+// ===== BASE DE DATOS (MANTENIDAS IGUAL) =====
 async function initDB() {
     try {
         await pool.execute(`CREATE TABLE IF NOT EXISTS control_chat (
@@ -222,7 +246,8 @@ async function actualizarDolar() {
 
 // ===== BOT WHATSAPP =====
 async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info');
+    // CAMBIO: Usamos la sesión de MySQL en lugar de archivos locales
+    const { state, saveCreds } = await useMySQLAuthState(pool);
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
@@ -239,7 +264,18 @@ async function startBot() {
     sock.ev.on('connection.update', (u) => {
         const { connection, lastDisconnect, qr } = u;
         if (qr) qrcode.toDataURL(qr, { scale: 10 }, (_, url) => qrCodeData = url);
-        if (connection === 'open') { qrCodeData = "ONLINE ✅"; console.log("🚀 BOT MASTER ONLINE"); }
+        if (connection === 'open') { 
+            qrCodeData = "ONLINE ✅"; 
+            console.log("🚀 BOT MASTER ONLINE"); 
+
+            // ==========================================
+            // INTEGRACIÓN NOTIFICADOR AUTOMÁTICO
+            // ==========================================
+            console.log("⏰ Iniciando ciclo de notificaciones automáticas...");
+            notificador.procesarFacturas(sock, pool); // Ejecución inmediata
+            setInterval(() => notificador.procesarFacturas(sock, pool), notificador.INTERVALO_REVISION);
+            // ==========================================
+        }
         if (connection === 'close') {
             const r = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
             if (r) startBot();
@@ -254,7 +290,6 @@ async function startBot() {
         const from = msg.key.remoteJid;
         if (from === 'status@broadcast' || from.includes('@g.us')) return;
 
-        // VERIFICACIÓN DE ADMINISTRADOR (Cualquiera de los IDs en la lista)
         const isAdmin = ADMIN_IDS.some(id => from.includes(id));
         const vendedor = await buscarVendedor(from, msg.pushName || "Vendedor");
 
@@ -377,7 +412,7 @@ async function startBot() {
     });
 }
 
-// ===== SERVIDOR HTTP =====
+// ===== SERVIDOR HTTP (MANTENIDO IGUAL) =====
 const server = http.createServer(async (req, res) => {
     const parsedUrl = url.parse(req.url, true);
     const header = `<nav class="navbar navbar-dark bg-dark mb-4 shadow"><div class="container"><a class="navbar-brand fw-bold" href="/">ONE4CARS ADMIN</a></div></nav>`;
