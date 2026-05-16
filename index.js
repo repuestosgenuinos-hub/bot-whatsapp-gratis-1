@@ -48,6 +48,7 @@ _Escriba el número de la opción o su consulta directamente._`;
 let qrCodeData = "Iniciando...";
 let socketBot = null;
 let dolarInfo = { bcv: 'Cargando...', paralelo: 'Cargando...' };
+let notificadorInterval = null;
 
 // ===== FUNCIONES DE APOYO =====
 
@@ -222,8 +223,11 @@ async function actualizarDolar() {
 }
 
 // ===== NOTIFICADOR DE FACTURAS NUEVAS =====
+let notificadorEjecutando = false;
+
 async function checkNuevasFacturas() {
-    if (!isBotReady()) return;
+    if (!isBotReady() || notificadorEjecutando) return;
+    notificadorEjecutando = true;
     try {
         const facturas = await notificador.obtenerFacturasNoNotificadas();
         for (const f of facturas) {
@@ -239,6 +243,8 @@ async function checkNuevasFacturas() {
         }
     } catch (e) {
         console.log("[NOTIFICADOR] Error:", e.message);
+    } finally {
+        notificadorEjecutando = false;
     }
 }
 
@@ -264,7 +270,9 @@ async function startBot() {
         if (connection === 'open') { 
             qrCodeData = "ONLINE ✅"; 
             console.log("🚀 BOT MASTER ONLINE");
-            setInterval(checkNuevasFacturas, 45000);
+            if (!notificadorInterval) {
+                notificadorInterval = setInterval(checkNuevasFacturas, 45000);
+            }
         }
         if (connection === 'close') {
             const r = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
