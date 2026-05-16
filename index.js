@@ -25,7 +25,7 @@ const notificador = require('./notificador_local');
 const PORT = process.env.PORT || 10000;
 
 // LISTA DE ADMINISTRADORES (Los 3 IDs autorizados)
-const ADMIN_IDS = ["228621243408492", "97899534934200", "191345255805075", "584142531553", "250370957778958" , "39058600415402" , "244362214650069" , "58381658247238" , "1924162162820"]; 
+const ADMIN_IDS = ["228621243408492", "97899534934200", "584142531553", "250370957778958"];
 
 const pool = mysql.createPool({
     host: 'one4cars.com',
@@ -254,8 +254,8 @@ async function checkNuevasFacturas() {
                 }
             }
 
-            await notificador.marcarNotificada(f.id_factura);
-            await randomDelay();
+            await pool.execute("UPDATE tab_facturas SET whatsapp_notificado = 'SI' WHERE id_factura = ?", [f.id_factura]);
+            await sleep(1000);
         }
         if (facturas.length > 0) {
             console.log(`[NOTIFICADOR] ${facturas.length} factura(s) notificada(s).`);
