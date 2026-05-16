@@ -10,7 +10,11 @@ const axios = require('axios');
 
 // CAPTURA GLOBAL DE ERRORES EVITA QUE EL BOT MUERA
 process.on('unhandledRejection', (err) => {
-    console.log("[UNHANDLED] Error no capturado:", err?.message || err);
+    const msg = err?.message || err;
+    console.log("[UNHANDLED] Error no capturado:", msg);
+    if (msg === "Connection Closed" && socketBot) {
+        setTimeout(() => startBot(), 3000);
+    }
 });
 process.on('uncaughtException', (err) => {
     console.log("[UNCAUGHT] Error crítico:", err?.message || err);
@@ -383,6 +387,15 @@ async function checkFacturasVencidas() {
 
 // ===== BOT WHATSAPP =====
 async function startBot() {
+    // Limpiar socket anterior antes de crear uno nuevo
+    if (socketBot) {
+        try {
+            socketBot.removeAllListeners();
+            socketBot.end(undefined);
+        } catch (e) {}
+        socketBot = null;
+    }
+
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     const { version } = await fetchLatestBaileysVersion();
 
@@ -406,11 +419,20 @@ async function startBot() {
             if (!notificadorInterval) {
                 notificadorInterval = setInterval(checkNuevasFacturas, 45000);
                 setInterval(checkFacturasVencidas, 86400000);
+                setInterval(() => {
+                    if (!isBotReady() && socketBot) {
+                        console.log("[BOT] Health check: reconectando...");
+                        startBot();
+                    }
+                }, 300000);
             }
         }
         if (connection === 'close') {
             const r = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (r) startBot();
+            if (r) {
+                console.log("[BOT] Reconectando en 5 segundos...");
+                setTimeout(() => startBot(), 5000);
+            }
         }
     });
 
@@ -717,4 +739,11 @@ const server = http.createServer(async (req, res) => {
             </div>
         </body></html>`);
     }
+});
+
+server.listen(PORT, '0.0.0.0', async () => {
+    await initDB();
+    startBot();
+    actualizarDolar();
+    setInterval(actualizarDolar, 3600000);
 });
