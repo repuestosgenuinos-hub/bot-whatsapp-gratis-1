@@ -83,8 +83,13 @@ function soloNumerosRIF(texto) {
 async function safeSendMessage(jid, content) {
     try {
         if (!socketBot) throw new Error("Socket no inicializado");
-        await socketBot.sendMessage(jid, content);
+        const sent = await socketBot.sendMessage(jid, content);
+        if (sent?.key?.id) {
+            botMessageTimestamps.set(sent.key.id, Date.now());
+            setTimeout(() => botMessageTimestamps.delete(sent.key.id), 300000);
+        }
         console.log(`[MSG] ✅ Mensaje enviado a ${jid}`);
+        return sent;
     } catch (e) {
         console.log(`[MSG] ❌ Error enviando mensaje:`, e.message);
     }
@@ -110,6 +115,8 @@ const randomDelay = async () => {
     const ms = Math.floor(Math.random() * (25000 - 15000 + 1)) + 15000; 
     await sleep(ms);
 };
+
+const botMessageTimestamps = new Map();
 
 async function guardarMensaje(tel, rol, contenido) {
     try {
@@ -498,8 +505,16 @@ async function startBot() {
             if (textMe === '!bot') {
                 await setModo(from, 'bot');
                 await safeSendMessage(from, { text: "🤖 Bot reactivado para este chat." });
-            } else if (!isAdmin) {
-                await setModo(from, 'humano');
+            } else {
+                const msgId = msg.key.id;
+                const isBotMessage = botMessageTimestamps.has(msgId);
+                if (!isBotMessage) {
+                    await pool.execute(
+                        "INSERT INTO control_chat (telefono, modo) VALUES (?, 'humano') ON DUPLICATE KEY UPDATE modo = 'humano', updated_at = CURRENT_TIMESTAMP",
+                        [from]
+                    );
+                    console.log(`[MODO] Chat ${from.split('@')[0]} cambiado a 'humano' por intervención humana`);
+                }
             }
             return;
         }
@@ -514,7 +529,19 @@ async function startBot() {
         await guardarMensaje(from, 'user', rawText);
 
         const sesion = await getSesion(from);
-        if (sesion && sesion.modo === 'humano' && !isAdmin) return;
+        if (sesion && sesion.modo === 'humano' && !isAdmin) {
+            const lastUpdate = sesion.updated_at;
+            if (lastUpdate) {
+                const diffMs = Date.now() - new Date(lastUpdate).getTime();
+                if (diffMs > 300000) {
+                    await setModo(from, 'bot');
+                } else {
+                    return;
+                }
+            } else {
+                return;
+            }
+        }
 
         // --- 1. LÓGICA DE RIF (RESTRINGIDA SOLO A ADMINS) ---
         if (isAdmin && esRIFPuro) {
