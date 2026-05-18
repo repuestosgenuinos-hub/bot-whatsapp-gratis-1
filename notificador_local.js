@@ -23,8 +23,9 @@ async function obtenerFacturasNoNotificadas() {
 
 async function obtenerFacturasNoNotificadasCount() {
     const conn = await mysql.createConnection(dbConfig);
-    const [rows] = await conn.execute("SELECT COUNT(*) as total FROM tab_facturas 
-    WHERE whatsapp_notificado = 'NO' AND pagada = 'NO' AND anulado = 'no'");
+    // CORREGIDO: Se usan backticks para evitar el error de token por salto de línea
+    const [rows] = await conn.execute(`SELECT COUNT(*) as total FROM tab_facturas 
+    WHERE whatsapp_notificado = 'NO' AND pagada = 'NO' AND anulado = 'no'`);
     await conn.end();
     return rows[0].total;
 }
@@ -43,6 +44,7 @@ async function obtenerFacturasVencidas() {
          WHERE f.pagada = 'NO' AND f.anulado = 'no'
            AND f.fecha_reg <= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
            AND (c.cliente_oficina IS NULL OR c.cliente_oficina != 'SI')
+           AND (v.nombre IS NULL OR v.nombre != 'OFICINA') -- FILTRO SOLICITADO
          ORDER BY f.fecha_reg ASC`
     );
     await conn.end();
@@ -60,6 +62,7 @@ async function obtenerFacturasVencidasAll() {
          LEFT JOIN tab_vendedores v ON f.id_vendedor = v.id_vendedor
          WHERE f.pagada = 'NO' AND f.anulado = 'no'
            AND f.fecha_reg <= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+           AND (v.nombre IS NULL OR v.nombre != 'OFICINA') -- FILTRO SOLICITADO
          ORDER BY f.fecha_reg ASC`
     );
     await conn.end();
@@ -86,7 +89,6 @@ async function marcarRecordatorio(id_factura, nivel) {
     await conn.end();
 }
 
-// ===== CONTROL ENVÍO A VENDEDORES (cada 3 días, solo días hábiles) =====
 async function obtenerUltimoEnvioVendedor() {
     const conn = await mysql.createConnection(dbConfig);
     const [rows] = await conn.execute("SELECT MAX(fecha_envio) as ultimo FROM envio_vendedor_log");
