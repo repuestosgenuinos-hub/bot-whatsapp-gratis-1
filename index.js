@@ -287,15 +287,21 @@ async function checkNuevasFacturas() {
         for (const f of facturas) {
             const jid = formatWhatsApp(f.celular);
             if (!jid) continue;
+
+            // ===== CÁLCULO DEL MONTO SEGÚN TU LÓGICA =====
+            const montoCalculado = (parseFloat(f.total) - parseFloat(f.abono_factura || 0)) / (parseFloat(f.porcentaje) || 1);
+            
             const fecha = new Date(f.fecha_reg).toISOString().split('T')[0];
-            const msg = `🧾 *NUEVA FACTURA REGISTRADA*\n\nHola *${f.nombres}*, se ha registrado una nueva factura en nuestro sistema:\n\n🔹 *N°:* ${f.nro_factura}\n🔹 *Monto:* $${parseFloat(f.total).toFixed(2)}\n🔹 *Fecha:* ${fecha}\n\nPuede consultar su estado de cuenta en:\nhttps://www.one4cars.com/estado_de_cuenta.php/`;
+            
+            // Mensaje para el cliente con el monto calculado
+            const msg = `🧾 *NUEVA FACTURA REGISTRADA*\n\nHola *${f.nombres}*, se ha registrado una nueva factura en nuestro sistema:\n\n🔹 *N°:* ${f.nro_factura}\n🔹 *Monto:* $${montoCalculado.toFixed(2)}\n🔹 *Fecha:* ${fecha}\n\nPuede consultar su estado de cuenta en:\nhttps://www.one4cars.com/estado_de_cuenta.php/`;
             await safeSendMessage(jid, { text: msg });
 
-            // Notificar tambien al vendedor
+            // Notificar también al vendedor con el mismo monto calculado
             if (f.celular_vendedor) {
                 const jidV = formatWhatsApp(f.celular_vendedor);
                 if (jidV) {
-                    const msgV = `📢 *NUEVA FACTURA DE SU CLIENTE*\n\nVendedor: *${f.vendedor_nombre || 'N/A'}*\nCliente: *${f.nombres}*\n\n🔹 *N° Factura:* ${f.nro_factura}\n🔹 *Monto:* $${parseFloat(f.total).toFixed(2)}\n🔹 *Fecha:* ${fecha}`;
+                    const msgV = `📢 *NUEVA FACTURA DE SU CLIENTE*\n\nVendedor: *${f.vendedor_nombre || 'N/A'}*\nCliente: *${f.nombres}*\n\n🔹 *N° Factura:* ${f.nro_factura}\n🔹 *Monto:* $${montoCalculado.toFixed(2)}\n🔹 *Fecha:* ${fecha}`;
                     await safeSendMessage(jidV, { text: msgV });
                 }
             }
@@ -312,7 +318,6 @@ async function checkNuevasFacturas() {
         notificadorEjecutando = false;
     }
 }
-
 // ===== RECORDATORIOS DE FACTURAS VENCIDAS =====
 let recordatorioEjecutando = false;
 
