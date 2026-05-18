@@ -24,8 +24,8 @@ async function procesarFacturas(sock, pool) {
 
         // 1. NOTIFICACIONES INMEDIATAS
         const [nuevas] = await pool.execute(
-            `SELECT f.id_factura, f.nro_factura, f.total, f.id_cliente, f.id_vendedor 
-             FROM tab_facturas f WHERE f.pagada = 'NO' AND f.whatsapp_notificado = 'NO' LIMIT ?`, 
+            `SELECT f.id_factura, f.nro_factura, f.total, f.id_cliente, f.id_vendedor, f.vendedor 
+             FROM tab_facturas f WHERE f.pagada = 'NO'  and f.vendedor <> 'OFICINA' AND f.whatsapp_notificado = 'NO' LIMIT ?`, 
             [LIMITE_POR_CICLO]
         );
 
@@ -36,8 +36,8 @@ async function procesarFacturas(sock, pool) {
 
         // 2. NOTIFICACIONES DE MORA (30 DÍAS)
         const [morosas] = await pool.execute(
-            `SELECT f.id_factura, f.nro_factura, f.total, f.id_cliente, f.id_vendedor 
-             FROM tab_facturas f WHERE f.pagada = 'NO' AND f.whatsapp_mora = 'NO' 
+            `SELECT f.id_factura, f.nro_factura, f.total, f.id_cliente, f.id_vendedor , f.vendedor
+             FROM tab_facturas f WHERE f.pagada = 'NO' and f.vendedor <> 'OFICINA' AND f.whatsapp_mora = 'NO' 
              AND DATEDIFF(CURDATE(), f.fecha_reg) >= 30 LIMIT ?`, 
             [LIMITE_POR_CICLO]
         );
