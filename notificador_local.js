@@ -44,7 +44,7 @@ async function obtenerFacturasVencidas() {
          WHERE f.pagada = 'NO' AND f.anulado = 'no'
            AND f.fecha_reg <= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
            AND (c.cliente_oficina IS NULL OR c.cliente_oficina != 'SI')
-           AND (v.nombre IS NULL OR v.nombre != 'OFICINA') -- FILTRO SOLICITADO
+           AND (v.nombre IS NULL OR v.nombre != 'OFICINA')  AND (v.nombre IS NULL OR v.nombre != 'MANUEL FERRAZ') -- FILTRO SOLICITADO
          ORDER BY f.fecha_reg ASC`
     );
     await conn.end();
