@@ -228,14 +228,12 @@ async function buscarProductoPorTexto(texto) {
     const queryBase = "SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ";
     
     // 1. Intentar con TODAS las palabras juntas (AND) - BÚSQUEDA ESTRICTA
-    // Solo devolvemos resultados si el producto contiene TODAS las palabras clave filtradas.
     const allAnd = palabras.map(() => "descripcion LIKE ?").join(" AND ");
     try {
         const [rows] = await pool.execute(queryBase + allAnd + " LIMIT 8", palabras.map(p => `%${p}%`));
         if (rows.length > 0) return rows;
     } catch (e) {}
 
-    // SE ELIMINÓ EL BUCLE DE BÚSQUEDA INDIVIDUAL (OR) PARA EVITAR RESPUESTAS ABSURDAS
     return null;
 }
 
@@ -600,8 +598,11 @@ async function startBot() {
             return await safeSendMessage(from, { text: listado });
         }
 
-        // --- 6. FALLBACK ---
-        await safeSendMessage(from, { text: "No pude encontrar ese producto o comando. Por favor, verifica la descripción o escribe *menu* para ver las opciones." });
+        // --- 6. FALLBACK (SÓLO SI NO ES UNA RESPUESTA CORTA) ---
+        const conversationalShorts = ['si', 'no', 'ok', 'vale', 'gracias', 'ya', 'entendido', 'está bien', 'bueno', 'dale', 'está ok', 'está bien', 'claro'];
+        if (conversationalShorts.includes(text)) return; // No responder a confirmaciones simples
+
+        await safeSendMessage(from, { text: "Lo siento, no logré entender tu solicitud. 😕 ¿Podrías darme más detalles o escribir *menu* para ver nuestras opciones?" });
         } catch (e) { console.log("[MSG] Error en handler de mensajes:", e.message); }
     });
 }
