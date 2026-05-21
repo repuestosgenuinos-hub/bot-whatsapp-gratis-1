@@ -234,6 +234,13 @@ async function buscarProductoPorTexto(texto) {
         if (rows.length > 0) return rows;
     } catch (e) {}
 
+    // 2. Fallback: si AND no encuentra nada, buscar con CUALQUIER palabra (OR)
+    const allOr = palabras.map(() => "descripcion LIKE ?").join(" OR ");
+    try {
+        const [rows] = await pool.execute(queryBase + allOr + " LIMIT 8", palabras.map(p => `%${p}%`));
+        if (rows.length > 0) return rows;
+    } catch (e) {}
+
     return null;
 }
 
