@@ -586,8 +586,27 @@ async function startBot() {
         // --- 3. LÓGICA DE PRODUCTOS (Para todos) ---
         if (text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
             try {
+                // --- 3. LÓGICA DE PRODUCTOS (Para todos) ---
+        if (text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
+            try {
                 const prods = await buscarProductoPorTexto(rawText);
                 if (prods) {
+                    // LISTA DE SALUDOS HUMANIZADOS (El bot elegirá uno al azar)
+                    const saludos = [
+                        "Saludos estimado amigo, tomando en cuenta sus comentarios permítame recomendarle los siguientes artículos: 👇",
+                        "¡Hola! He buscado en nuestro inventario y creo que estos artículos son justo lo que necesita: 👇",
+                        "Con gusto le ayudo. Basado en lo que me indica, aquí tiene las mejores opciones disponibles: 👇",
+                        "Hola, un placer saludarle. He encontrado estos productos que coinciden con su búsqueda: 👇"
+                    ];
+                    const saludoAzar = saludos[Math.floor(Math.random() * saludos.length)];
+
+                    // 1. Enviamos primero el mensaje humano
+                    await safeSendMessage(from, { text: saludoAzar });
+                    
+                    // Pequeña pausa para que se sienta más natural
+                    await sleep(1000);
+
+                    // 2. Ahora enviamos la lista de productos
                     for (const p of prods) {
                         const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
                         const caption = `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio Final: $${precioLimpio}*\n📝 ${p.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}`;
@@ -597,6 +616,8 @@ async function startBot() {
                         } catch (imgErr) {
                             await safeSendMessage(from, { text: caption });
                         }
+                        // Pausa entre productos para evitar bloqueos de WhatsApp
+                        await sleep(1500);
                     }
                     return;
                 }
