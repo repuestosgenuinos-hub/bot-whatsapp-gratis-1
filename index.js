@@ -193,8 +193,6 @@ async function buscarProductoPorTexto(texto) {
     const rawLimpio = texto.trim();
 
     // 1. BÚSQUEDA EXACTA POR PRODUCTO (SKU) O EQUIVALENCIA
-    // El campo equivalencia contiene valores separados por espacios. 
-    // Usamos REGEXP para asegurar que coincida la palabra exacta y no una parte.
     try {
         const sqlExacto = `
             SELECT producto, descripcion, tipo, precio_final 
@@ -203,16 +201,13 @@ async function buscarProductoPorTexto(texto) {
             AND (producto = ? OR equivalencia REGEXP ?) 
             LIMIT 1`;
         
-        // El regex [[:<:]] o \\b sirve para límites de palabra en MySQL
-        const regexEquiv = new RegExp(`(^|[[:space:]])${rawLimpio}([[:space:]]|$)`); 
-        // Nota: Dependiendo de la version de MySQL, se usa \\b o [[:<:]]. Probaremos con LIKE flexible si falla.
         const [rowsExactos] = await pool.execute(sqlExacto, [rawLimpio, `(^|[[:space:]])${rawLimpio}([[:space:]]|$)`]);
         if (rowsExactos.length > 0) return rowsExactos;
     } catch (e) {
         console.log("Error búsqueda exacta SKU/Equiv:", e.message);
     }
 
-    // 2. BÚSQUEDA POR DESCRIPCIÓN (Lógica Flexible)
+    // 2. BÚSQUEDA POR DESCRIPCIÓN (Súper Precisa)
     const stopWords = [
         'tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde',
         'precio', 'tienen', 'el', 'una', 'un', 'hay', 'si', 'es', 'de', 'con', 'para',
@@ -247,10 +242,6 @@ async function buscarProductoPorTexto(texto) {
 
     if (palabrasBase.length === 0) return null;
 
-    const positionalWords = ['superior', 'sup', 'inferior', 'inf', 'interno', 'int', 'externo', 'ext', 'derecha', 'der', 'izquierda', 'izq'];
-    const isOnlyPositional = palabrasBase.every(p => positionalWords.includes(p));
-    if (isOnlyPositional) return null;
-
     const expandirFormas = (pal) => {
         const f = [pal];
         if (pal.endsWith('es') && pal.length > 4) f.push(pal.slice(0, -2));
@@ -264,7 +255,8 @@ async function buscarProductoPorTexto(texto) {
 
     const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
     
-    // --- INTENTO 1: BÚSQUEDA ESTRICTA (AND Flexible) ---
+    // --- INTENTO 1: BÚSQUEDA ESTRICTA (AND) ---
+    // Si el usuario dice "rolineras delantera fiesta", el bot EXIGE que las tres palabras existan.
     let whereClause = "";
     let queryParams = [];
 
@@ -284,7 +276,13 @@ async function buscarProductoPorTexto(texto) {
         console.log("Error Intento 1:", e.message);
     }
 
-    // --- INTENTO 2: BÚSQUEDA POR RELEVANCIA DINÁMICA ---
+    // --- INTENTO 2: RELEVANCIA SOLO SI NO HAY FILTROS ESPECÍFICOS ---
+    // Evitamos que el fallback devuelva "todo" si el usuario fue específico.
+    const specificQualifiers = ['delantera', 'trasera', 'interna', 'externa', 'derecha', 'izquierda', 'superior', 'inferior'];
+    const hasSpecificQualifier = palabrasBase.some(p => specificQualifiers.includes(p));
+    
+    if (hasSpecificQualifier) return null; // Si pidió "delantera" y el AND no encontró nada, no mostramos "todas".
+
     let minRelevance = 1;
     if (palabrasBase.length >= 3) minRelevance = 2; 
     if (palabrasBase.length >= 5) minRelevance = 3; 
@@ -342,7 +340,6 @@ async function actualizarDolar() {
 
 // ===== NOTIFICADOR DE FACTURAS NUEVAS =====
 let notificadorEjecutando = false;
-
 async function checkNuevasFacturas() {
     if (!isBotReady() || notificadorEjecutando) return;
     notificadorEjecutando = true;
