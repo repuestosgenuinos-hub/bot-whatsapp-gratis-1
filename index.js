@@ -7,7 +7,7 @@ const fs = require('fs');
 const mysql = require('mysql2/promise');
 const axios = require('axios');
 
-// CAPTURA GLOBAL DE ERRORES
+// CAPTURA GLOBAL DE ERRORES EVITA QUE EL BOT MUERA
 process.on('unhandledRejection', (err) => {
     const msg = err?.message || err;
     console.log("[UNHANDLED] Error no capturado:", msg);
@@ -19,13 +19,15 @@ process.on('uncaughtException', (err) => {
     console.log("[UNCAUGHT] Error crítico:", err?.message || err);
 });
 
-// MODULOS EXTERNOS (Asegúrate que estos archivos existan en tu carpeta)
+// MODULOS EXTERNOS
 const cobranza = require('./cobranza');
 const marketingModulo = require('./marketing');
 const notificador = require('./notificador_local');
 
 // CONFIGURACION
 const PORT = process.env.PORT || 10000;
+
+// LISTA DE ADMINISTRADORES
 const ADMIN_IDS = ["228621243408492", "97899534934200", "584142531553", "250370957778958", "244362214650069", "60305753296939", "1924162162820", "39058600415402", "58381658247238"];   
 
 const pool = mysql.createPool({
@@ -190,7 +192,7 @@ async function buscarProductoPorTexto(texto) {
     const txtNormal = normalizar(texto);
     const rawLimpio = texto.trim();
 
-    // 1. BÚSQUEDA EXACTA (SKU)
+    // 1. BÚSQUEDA EXACTA POR PRODUCTO (SKU)
     try {
         const sqlExacto = `
             SELECT producto, descripcion, tipo, precio_final 
@@ -205,13 +207,13 @@ async function buscarProductoPorTexto(texto) {
         console.log("Error búsqueda exacta SKU:", e.message);
     }
 
-    // 2. LISTA EXTENDIDA DE STOPWORDS (Palabras ruido)
+    // 2. BÚSQUEDA POR DESCRIPCIÓN (Súper Precisa)
     const stopWords = [
         'tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde',
         'precio', 'tienen', 'el', 'una', 'un', 'hay', 'si', 'es', 'de', 'con', 'para',
         'busco', 'hola', 'buenos', 'buenas', 'dias', 'tardes', 'noches', 'como', 'estas',
-        'esta', 'familia', 'espero', 'encuentres', 'encuenters', 'bien', 'queria', 'quería',
-        'preguntarte', 'gracias', 'por', 'favor', 'ayuda', 'puedes', 'podrias', 'podrías',
+        'esta', 'familia', 'espero', 'encuentres', 'encuenters', 'bien', 'queria',
+        'preguntarte', 'gracias', 'por', 'favor', 'ayuda', 'puedes', 'podrias',
         'quisiera', 'necesito', 'saludos', 'cordial', 'muchas', 'todo', 'bienvenidos',
         'bendiciones', 'exito', 'exitos', 'dia', 'tarde', 'noche', 'pregunta', 'consulta',
         'atento', 'atenta', 'saludo', 'estimados', 'estimado', 'buen', 'buena', 'bueno',
@@ -219,10 +221,10 @@ async function buscarProductoPorTexto(texto) {
         'tu', 'tus', 'nos', 'os', 'que', 'cual', 'cuales', 'quien', 'quienes',
         'cuando', 'porque', 'pues', 'pero', 'mas', 'muy', 'asi', 'aun', 'entre', 'sin',
         'sobre', 'tras', 'durante', 'mediante', 'excepto', 'segun', 'puede', 'puedo',
-        'pueden', 'podemos', 'podria', 'podría', 'hacer', 'hace', 'hacen', 'ser', 'estar', 'tener',
+        'pueden', 'podemos', 'podria', 'hacer', 'hace', 'hacen', 'ser', 'estar', 'tener',
         'tengo', 'tenemos', 'tiene', 'decir', 'dice', 'dicen', 'digo', 'ver', 'veo',
-        'ven', 'vez', 'veces', 'quiero', 'quiere', 'quieren', 'queremos', 'gustaria', 'gustaría',
-        'gusta', 'gustan', 'gusto', 'necesita', 'necesitan', 'necesitamos', 'pueda','UNID.','unid.','unidades','unidad','UNIDADES','unidades',
+        'ven', 'vez', 'veces', 'quiero', 'quiere', 'quieren', 'queremos', 'gustaria',
+        'gusta', 'gustan', 'gusto', 'necesita', 'necesitan', 'necesitamos', 'pueda','UNID.','unid.','unidades','unidad','UNIDADES',
         'puedas', 'pudiera', 'pudieras', 'listo', 'claro', 'ok', 'okey', 'vale', 'va',
         'vamos', 'vaya', 'algun', 'alguna', 'algunos', 'algunas', 'ningun', 'ninguna',
         'tipo', 'tipos', 'preguntar', 'disculpa', 'disculpe', 'permiso', 'ayudar',
@@ -232,8 +234,7 @@ async function buscarProductoPorTexto(texto) {
         'ando', 'andas', 'andan', 'andaba', 'andabas', 'andabamos', 'andaban',
         'estoy', 'estas', 'esta', 'estaba', 'estabas', 'estabamos', 'estaban',
         'vengo', 'vienes', 'viene', 'vienen', 'venia', 'venias', 'veniamos', 'venian',
-        'voy', 'vas', 'va', 'vamos', 'van', 'iba', 'ibas', 'ibamos', 'iban',
-        'pais', 'país', 'llegando', 'llegue', 'llegué', 'tenias', 'tenía', 'buscando', 'estaba'
+        'voy', 'vas', 'va', 'vamos', 'van', 'iba', 'ibas', 'ibamos', 'iban'
     ];
 
     const palabrasBase = txtNormal.split(' ')
@@ -254,63 +255,30 @@ async function buscarProductoPorTexto(texto) {
 
     const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
     
-    // --- INTENTO 1: BÚSQUEDA ESTRICTA (AND) ---
-    // Solo intentamos AND si el usuario escribió pocas palabras (está siendo técnico)
-    if (palabrasBase.length <= 3) {
-        let whereClause = "";
-        let queryParams = [];
+    // --- LÓGICA DE BÚSQUEDA ESTRICTA (SÓLO AND) ---
+    // Para evitar que muestre "todas las rolineras" cuando pidió "fiesta", 
+    // el sistema ahora EXIGE que CADA palabra base esté presente en la descripción.
+    let whereClause = "";
+    let queryParams = [];
 
-        palabrasBase.forEach((pal, index) => {
-            const formas = expandirFormas(pal);
-            const conditions = formas.map(() => "descripcion LIKE ?");
-            whereClause += `(${conditions.join(" OR ")})`;
-            if (index < palabrasBase.length - 1) whereClause += " AND ";
-            formas.forEach(f => queryParams.push(`%${f}%`));
-        });
-
-        try {
-            const sql = `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ${stockCondition} AND ${whereClause} LIMIT 8`;
-            const [rows] = await pool.execute(sql, queryParams);
-            if (rows.length > 0) return rows; 
-        } catch (e) {
-            console.log("Error Intento 1:", e.message);
-        }
-    }
-
-    // --- INTENTO 2: BÚSQUEDA POR RELEVANCIA (Weighted Search) ---
-    // Si el usuario escribió mucho, buscamos los productos que tengan la MAYOR cantidad de coincidencias.
-    const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
-    const orConditions = expandedTerms.map(() => "descripcion LIKE ?");
-    const orParams = expandedTerms.map(p => `%${p}%`);
-
-    const relevanceParts = palabrasBase.map(p => {
-        const formas = expandirFormas(p);
-        const cases = formas.map(f => `descripcion LIKE '%${f.replace(/[^a-z]/g, '')}%'`);
-        return `(CASE WHEN ${cases.join(' OR ')} THEN 1 ELSE 0 END)`;
+    palabrasBase.forEach((pal, index) => {
+        const formas = expandirFormas(pal);
+        const conditions = formas.map(() => "descripcion LIKE ?");
+        whereClause += `(${conditions.join(" OR ")})`;
+        if (index < palabrasBase.length - 1) whereClause += " AND ";
+        formas.forEach(f => queryParams.push(`%${f}%`));
     });
-    const relevanceSQL = relevanceParts.join(' + ');
 
     try {
-        // Definimos un mínimo de coincidencias para evitar resultados basura
-        // Si el usuario escribió 5 palabras clave, pedimos que al menos 2 coincidan.
-        let minRelevance = 1;
-        if (palabrasBase.length >= 4) minRelevance = 2;
-
-        const sqlRelevancia = `
-            SELECT producto, descripcion, tipo, precio_final 
-            FROM tab_productos 
-            WHERE ${stockCondition} AND ${orConditions.join(" OR ")} 
-            HAVING (${relevanceSQL}) >= ? 
-            ORDER BY ${relevanceSQL} DESC 
-            LIMIT 8`;
-            
-        const [rows] = await pool.execute(sqlRelevancia, [...orParams, minRelevance]);
-        if (rows.length > 0) return rows;
+        // Solo devolvemos productos que coincidan con TODAS las palabras clave.
+        const sql = `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ${stockCondition} AND ${whereClause} LIMIT 8`;
+        const [rows] = await pool.execute(sql, queryParams);
+        if (rows.length > 0) return rows; 
     } catch (e) {
-        console.log("Error Intento 2:", e.message);
+        console.log("Error en búsqueda estricta:", e.message);
     }
 
-    return null;
+    return null; // Si no cumple todas las palabras, no devuelve nada (evita ruido)
 }
 
 async function obtenerDetalleFacturas(id_cliente, id_vendedor = null) {
@@ -335,7 +303,7 @@ async function actualizarDolar() {
     } catch (e) { console.log("Error Dolar API"); }
 }
 
-// ===== NOTIFICADOR de FACTURAS NUEVAS =====
+// ===== NOTIFICADOR DE FACTURAS NUEVAS =====
 let notificadorEjecutando = false;
 async function checkNuevasFacturas() {
     if (!isBotReady() || notificadorEjecutando) return;
@@ -563,7 +531,7 @@ async function startBot() {
                     const prods = await buscarProductoPorTexto(rawText);
                     if (prods) {
                         const saludos = [
-                            "Saludos estimado, gracias por tu consulta puedo recomendarte estos artículos: 👇",
+                            "Saludos estimado , gracias por tu consulta puedo recomendarte estos artículos: 👇",
                             "¡Hola! He buscado en nuestro inventario y creo que estos artículos es lo que buscas: 👇",
                             "Con gusto le ayudo. Segun lo que me dices, aquí tienes la mejor opcion disponible: 👇",
                             "Hola, un placer saludarle. He encontrado estos productos que coinciden con su búsqueda: 👇"
