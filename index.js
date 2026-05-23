@@ -241,7 +241,9 @@ async function buscarProductoPorTexto(texto) {
 
     const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
     
-    // --- 1. BÚSQUEDA ESTRICTA (AND FLEXIBLE) ---
+    // --- NUEVA LÓGICA DE BÚSQUEDA AND FLEXIBLE ---
+    // Para cada palabra, creamos un grupo de (desc LIKE %p1% OR desc LIKE %p2%...)
+    // Y luego unimos todos esos grupos con AND.
     let whereClause = "";
     let queryParams = [];
 
@@ -250,25 +252,19 @@ async function buscarProductoPorTexto(texto) {
         const conditions = formas.map(() => "descripcion LIKE ?");
         whereClause += `(${conditions.join(" OR ")})`;
         if (index < palabrasBase.length - 1) whereClause += " AND ";
+        
         formas.forEach(f => queryParams.push(`%${f}%`));
     });
 
     try {
         const sql = `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ${stockCondition} AND ${whereClause} LIMIT 8`;
         const [rows] = await pool.execute(sql, queryParams);
-        if (rows.length > 0) return rows; // Si encontró resultados exactos, se detiene aquí.
+        if (rows.length > 0) return rows;
     } catch (e) {
-        console.log("Error en búsqueda AND:", e.message);
+        console.log("Error en búsqueda AND Flexible:", e.message);
     }
 
-    // --- 2. REGLA DE ESTRICTEZ (Anti-Basura) ---
-    // Si el usuario escribió 3 o más palabras clave, consideramos que es una búsqueda específica.
-    // NO permitimos el Fallback (OR) para evitar mostrar productos de otros vehículos.
-    if (palabrasBase.length >= 3) {
-        return null; 
-    }
-
-    // --- 3. FALLBACK: Búsqueda por Relevancia (Solo para búsquedas cortas de 1 o 2 palabras) ---
+    // --- FALLBACK: Búsqueda por Relevancia (Solo si el AND Flexible no encontró nada) ---
     const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
     const orConditions = expandedTerms.map(() => "descripcion LIKE ?");
     const orParams = expandedTerms.map(p => `%${p}%`);
