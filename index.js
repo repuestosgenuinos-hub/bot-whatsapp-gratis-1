@@ -194,103 +194,88 @@ async function buscarCliente(rifLimpio) {
  */
 async function buscarProductoPorTexto(texto) {
     const txtNormal = normalizar(texto);
-    const stopWords = [
-        'tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde',
-        'precio', 'tienen', 'el', 'una', 'un', 'hay', 'si', 'es', 'de', 'con', 'para',
-        'busco', 'hola', 'buenos', 'buenas', 'dias', 'tardes', 'noches', 'como', 'estas',
-        'esta', 'familia', 'espero', 'encuentres', 'encuenters', 'bien', 'queria',
-        'preguntarte', 'gracias', 'por', 'favor', 'ayuda', 'puedes', 'podrias',
-        'quisiera', 'necesito', 'saludos', 'cordial', 'muchas', 'todo', 'bienvenidos',
-        'bendiciones', 'exito', 'exitos', 'dia', 'tarde', 'noche', 'pregunta', 'consulta',
-        'atento', 'atenta', 'saludo', 'estimados', 'estimado', 'buen', 'buena', 'bueno',
-        'se', 'me', 'le', 'te', 'lo', 'los', 'las', 'les', 'su', 'sus', 'mi', 'mis',
-        'tu', 'tus', 'nos', 'os', 'que', 'cual', 'cuales', 'quien', 'quienes',
-        'cuando', 'porque', 'pues', 'pero', 'mas', 'muy', 'asi', 'aun', 'entre', 'sin',
-        'sobre', 'tras', 'durante', 'mediante', 'excepto', 'segun', 'puede', 'puedo',
-        'pueden', 'podemos', 'podria', 'hacer', 'hace', 'hacen', 'ser', 'estar', 'tener',
-        'tengo', 'tenemos', 'tiene', 'decir', 'dice', 'dicen', 'digo', 'ver', 'veo',
-        'ven', 'vez', 'veces', 'quiero', 'quiere', 'quieren', 'queremos', 'gustaria',
-        'gusta', 'gustan', 'gusto', 'necesita', 'necesitan', 'necesitamos', 'pueda','UNID.','unid.','unidades','unidad','UNIDADES',
-        'puedas', 'pudiera', 'pudieras', 'listo', 'claro', 'ok', 'okey', 'vale', 'va',
-        'vamos', 'vaya', 'algun', 'alguna', 'algunos', 'algunas', 'ningun', 'ninguna',
-        'tipo', 'tipos', 'preguntar', 'disculpa', 'disculpe', 'permiso', 'ayudar',
-        'apoyo', 'consulta', 'consultar', 'info', 'informacion', 'decirme', 'dime',
-        'avísame', 'avisa', 'saber', 'sabes', 'saben', 'sabemos',
-        'pana', 'panas', 'brother', 'bro', 'amigo', 'amigos', 'compa', 'compadre',
-        'ando', 'andas', 'andan', 'andaba', 'andabas', 'andabamos', 'andaban',
-        'estoy', 'estas', 'esta', 'estaba', 'estabas', 'estabamos', 'estaban',
-        'vengo', 'vienes', 'viene', 'vienen', 'venia', 'venias', 'veniamos', 'venian',
-        'voy', 'vas', 'va', 'vamos', 'van', 'iba', 'ibas', 'ibamos', 'iban'
-    ];
+    
+    const stopWords = ['tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde', 'precio', 'tienen', 'el', 'una', 'un', 'hay', 'si', 'es', 'de', 'con', 'para', 'busco', 'hola', 'buenos', 'buenas', 'dias', 'tardes', 'noches', 'como', 'estas', 'esta', 'familia', 'espero', 'encuentres', 'bien', 'queria', 'preguntarte', 'gracias', 'por', 'favor', 'ayuda', 'puedes', 'podrias', 'quisiera', 'necesito', 'saludos', 'cordial', 'muchas', 'todo', 'bienvenidos', 'bendiciones', 'exito', 'dia', 'tarde', 'noche', 'pregunta', 'consulta', 'atento', 'saludo', 'estimados', 'buen', 'bueno', 'se', 'me', 'le', 'te', 'lo', 'los', 'las', 'les', 'su', 'sus', 'mi', 'mis', 'tu', 'tus', 'nos', 'que', 'cual', 'quien', 'cuando', 'porque', 'pues', 'pero', 'mas', 'muy', 'asi', 'aun', 'entre', 'sin', 'sobre', 'tras', 'durante', 'mediante', 'excepto', 'segun', 'puede', 'puedo', 'pueden', 'podemos', 'hacer', 'hace', 'ser', 'estar', 'tener', 'tengo', 'tenemos', 'tiene', 'decir', 'dice', 'ver', 'veo', 'ven', 'vez', 'quiero', 'quiere', 'queremos', 'gustaria', 'gusta', 'necesita', 'pueda', 'unid', 'unidades', 'unidad', 'listo', 'claro', 'ok', 'vale', 'va', 'vamos', 'vaya', 'algun', 'ningun', 'tipo', 'preguntar', 'disculpa', 'permiso', 'ayudar', 'apoyo', 'info', 'informacion', 'decirme', 'dime', 'avísame', 'saber', 'sabes', 'pana', 'brother', 'bro', 'amigo', 'compa', 'ando', 'estas', 'estaba', 'vengo', 'vienes', 'viene', 'voy', 'vas', 'iba', 'llegando', 'pais'];
+    
+    const marcasModelos = ['fiesta', 'aveo', 'corsa', 'optra', 'spark', 'matiz', 'esteeem', 'swift', 'focus', 'ecosport', 'ka', 'monza', 'esperos', 'lanos', 'nubira', 'crossfox', 'saveiro', 'toyota', 'ford', 'chevrolet', 'hyundai', 'kia', 'nissan', 'mazda', 'honda', 'vw', 'volkswagen'];
 
-    const palabrasBase = txtNormal.split(' ')
-        .filter(p => p.length > 2 && !stopWords.includes(p));
-
+    const palabrasBase = txtNormal.split(' ').filter(p => p.length > 2 && !stopWords.includes(p));
     if (palabrasBase.length === 0) return null;
 
-    const positionalWords = ['superior', 'sup', 'inferior', 'inf', 'interno', 'int', 'externo', 'ext', 'derecha', 'der', 'izquierda', 'izq'];
-    const isOnlyPositional = palabrasBase.every(p => positionalWords.includes(p));
-    if (isOnlyPositional) return null;
+    // Identificar palabras críticas (Marcas/Modelos)
+    const criticas = palabrasBase.filter(p => marcasModelos.includes(p));
 
     const expandirFormas = (pal) => {
         const f = [pal];
         if (pal.endsWith('es') && pal.length > 4) f.push(pal.slice(0, -2));
         if (pal.endsWith('s') && pal.length > 3 && !pal.endsWith('es')) f.push(pal.slice(0, -1));
-        if (!pal.endsWith('s')) {
-            f.push(pal + 's');
-            if (pal.endsWith('z')) f.push(pal.slice(0, -1) + 'ces');
-        }
+        if (!pal.endsWith('s')) { f.push(pal + 's'); if (pal.endsWith('z')) f.push(pal.slice(0, -1) + 'ces'); }
         return [...new Set(f)];
     };
 
     const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
-    
-    // Obtenemos todos los productos que coincidan con AL MENOS UNA palabra
-    const expandedAllTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
-    const orConditions = expandedAllTerms.map(() => "descripcion LIKE ?");
-    const orParams = expandedAllTerms.map(p => `%${p}%`);
+
+    // ==========================================================================================
+    // FILTRO ABSOLUTO: Si hay marcas/modelos, el SQL DEBE obligar a que aparezcan
+    // ==========================================================================================
+    let absoluteFilter = "";
+    let absoluteParams = [];
+    if (criticas.length > 0) {
+        // Construimos un AND (desc LIKE %marca1% OR desc LIKE %marca2%...)
+        const conditions = criticas.map(() => "descripcion LIKE ?");
+        absoluteFilter = ` AND (${conditions.join(" OR ")})`;
+        criticas.forEach(p => absoluteParams.push(`%${p}%`));
+    }
+
+    // --- INTENTO 1: BÚSQUEDA ESTRICTA (AND) ---
+    let whereClause = "";
+    let queryParams = [];
+    palabrasBase.forEach((pal, index) => {
+        const formas = expandirFormas(pal);
+        const conditions = formas.map(() => "descripcion LIKE ?");
+        whereClause += `(${conditions.join(" OR ")})`;
+        if (index < palabrasBase.length - 1) whereClause += " AND ";
+        formas.forEach(f => queryParams.push(`%${f}%`));
+    });
 
     try {
-        const [allMatches] = await pool.execute(
-            `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ${stockCondition} AND ${orConditions.join(" OR ")}`,
-            orParams
-        );
+        // Aplicamos el filtro absoluto al final de la consulta
+        const sql = `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ${stockCondition} AND ${whereClause} ${absoluteFilter} LIMIT 8`;
+        const [rows] = await pool.execute(sql, [...queryParams, ...absoluteParams]);
+        if (rows.length > 0) return rows; 
+    } catch (e) { console.log("Error Intento 1:", e.message); }
 
-        if (allMatches.length === 0) return null;
+    // --- INTENTO 2: BÚSQUEDA POR RELEVANCIA (SÓLO SI EL ESTRICTO FALLÓ) ---
+    let minRelevance = 1;
+    if (palabrasBase.length >= 3) minRelevance = 2;
 
-        // Calculamos la relevancia real: ¿Cuántas palabras de la consulta coinciden con la descripción?
-        const scoredProducts = allMatches.map(prod => {
-            let matchCount = 0;
-            const desc = prod.descripcion.toLowerCase();
+    const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
+    const orConditions = expandedTerms.map(() => "descripcion LIKE ?");
+    const orParams = expandedTerms.map(p => `%${p}%`);
+
+    const relevanceParts = palabrasBase.map(p => {
+        const formas = expandirFormas(p);
+        const cases = formas.map(f => `descripcion LIKE '%${f.replace(/[^a-z]/g, '')}%'`);
+        return `(CASE WHEN ${cases.join(' OR ')} THEN 1 ELSE 0 END)`;
+    });
+    const relevanceSQL = relevanceParts.join(' + ');
+
+    try {
+        // AQUÍ ESTÁ LA CLAVE: También aplicamos el absoluteFilter en la relevancia
+        const sqlRelevancia = `
+            SELECT producto, descripcion, tipo, precio_final 
+            FROM tab_productos 
+            WHERE ${stockCondition} AND (${orConditions.join(" OR ")}) ${absoluteFilter} 
+            HAVING (${relevanceSQL}) >= ? 
+            ORDER BY ${relevanceSQL} DESC 
+            LIMIT 8`;
             
-            palabrasBase.forEach(pal => {
-                const formas = expandirFormas(pal);
-                if (formas.some(f => desc.includes(f))) {
-                    matchCount++;
-                }
-            });
-            
-            return { ...prod, score: matchCount };
-        });
+        const [rows] = await pool.execute(sqlRelevancia, [...orParams, minRelevance, ...absoluteParams]);
+        if (rows.length > 0) return rows;
+    } catch (e) { console.log("Error Intento 2:", e.message); }
 
-        // Encontramos el puntaje más alto entre todos los productos encontrados
-        const maxScore = Math.max(...scoredProducts.map(p => p.score));
-
-        // REGLA DE ORO: Solo mostrar productos que tengan el puntaje MÁXIMO.
-        // Si el mejor producto coincide en 3 palabras (ej. Rolineras, Delanteras, Fiesta),
-        // NO mostraremos los que coincidan en 2 (ej. Rolineras, Delanteras, Aveo).
-        const bestMatches = scoredProducts
-            .filter(p => p.score === maxScore)
-            .slice(0, 8); // Limite a 8 resultados
-
-        return bestMatches.length > 0 ? bestMatches : null;
-
-    } catch (e) {
-        console.log("Error en búsqueda de productos:", e.message);
-        return null;
-    }
+    return null;
 }
-
 async function obtenerDetalleFacturas(id_cliente, id_vendedor = null) {
     let query = `
         SELECT f.id_factura, f.nro_factura, f.total, f.abono_factura, f.fecha_reg, f.porcentaje, f.descuento, f.total_desc,
