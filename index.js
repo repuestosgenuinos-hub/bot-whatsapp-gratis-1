@@ -563,7 +563,7 @@ async function startBot() {
             }
 
             // --- 2. LÓGICA DE DESPACHO Y PEDIDOS (NUEVO) ---
-const tiempoWords = ["cuanto", "cuando", "tiempo", "tarda", "tardan", "demora", "pasado", "no ha llegado el pedido", "el pedido no ha llegado", "está"];
+const tiempoWords = ["cuanto", "cuando", "como",  "despachan","tiempo", "tarda", "tardan", "demora", "pasado", "no ha llegado el pedido", "el pedido no ha llegado", "está"];
 const despachoWords = ["despachar", "despacho", "llega", "entrega", "envio", "pedido"];
 
 const hasTiempo = tiempoWords.some(w => text.includes(w));
