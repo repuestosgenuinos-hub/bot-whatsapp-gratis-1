@@ -202,7 +202,6 @@ async function buscarProductoPorTexto(texto) {
     const palabrasBase = txtNormal.split(' ').filter(p => p.length > 2 && !stopWords.includes(p));
     if (palabrasBase.length === 0) return null;
 
-    // Identificar palabras críticas (Marcas/Modelos)
     const criticas = palabrasBase.filter(p => marcasModelos.includes(p));
 
     const expandirFormas = (pal) => {
@@ -216,18 +215,17 @@ async function buscarProductoPorTexto(texto) {
     const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
 
     // ==========================================================================================
-    // FILTRO ABSOLUTO: Si hay marcas/modelos, el SQL DEBE obligar a que aparezcan
+    // FILTRO ABSOLUTO: Obliga a que la marca/modelo aparezca en la descripción
     // ==========================================================================================
     let absoluteFilter = "";
     let absoluteParams = [];
     if (criticas.length > 0) {
-        // Construimos un AND (desc LIKE %marca1% OR desc LIKE %marca2%...)
         const conditions = criticas.map(() => "descripcion LIKE ?");
         absoluteFilter = ` AND (${conditions.join(" OR ")})`;
         criticas.forEach(p => absoluteParams.push(`%${p}%`));
     }
 
-    // --- INTENTO 1: BÚSQUEDA ESTRICTA (AND) ---
+    // --- INTENTO 1: BÚSQUEDA ESTRICTA (TODAS LAS PALABRAS) ---
     let whereClause = "";
     let queryParams = [];
     palabrasBase.forEach((pal, index) => {
@@ -239,13 +237,13 @@ async function buscarProductoPorTexto(texto) {
     });
 
     try {
-        // Aplicamos el filtro absoluto al final de la consulta
         const sql = `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ${stockCondition} AND ${whereClause} ${absoluteFilter} LIMIT 8`;
+        // Orden correcto de params: primeiro queryParams, luego absoluteParams
         const [rows] = await pool.execute(sql, [...queryParams, ...absoluteParams]);
         if (rows.length > 0) return rows; 
     } catch (e) { console.log("Error Intento 1:", e.message); }
 
-    // --- INTENTO 2: BÚSQUEDA POR RELEVANCIA (SÓLO SI EL ESTRICTO FALLÓ) ---
+    // --- INTENTO 2: BÚSQUEDA POR RELEVANCIA (SÓLO SI FALLA EL ESTRICTO) ---
     let minRelevance = 1;
     if (palabrasBase.length >= 3) minRelevance = 2;
 
@@ -261,7 +259,6 @@ async function buscarProductoPorTexto(texto) {
     const relevanceSQL = relevanceParts.join(' + ');
 
     try {
-        // AQUÍ ESTÁ LA CLAVE: También aplicamos el absoluteFilter en la relevancia
         const sqlRelevancia = `
             SELECT producto, descripcion, tipo, precio_final 
             FROM tab_productos 
@@ -270,13 +267,10 @@ async function buscarProductoPorTexto(texto) {
             ORDER BY ${relevanceSQL} DESC 
             LIMIT 8`;
             
-        const [rows] = await pool.execute(sqlRelevancia, [...orParams, minRelevance, ...absoluteParams]);
-        if (rows.length > 0) return rows;
-    } catch (e) { console.log("Error Intento 2:", e.message); }
-
-    return null;
-}
-async function obtenerDetalleFacturas(id_cliente, id_vendedor = null) {
+        // ORDEN CRÍTICO DE PARÁMETROS:
+        // 1. orParams (para los LIKE del WHERE)
+        // 2. absoluteParams (para el filtro de marca)
+        // 3. minRelevance (para el valor del HAVING)async function obtenerDetalleFacturas(id_cliente, id_vendedor = null) {
     let query = `
         SELECT f.id_factura, f.nro_factura, f.total, f.abono_factura, f.fecha_reg, f.porcentaje, f.descuento, f.total_desc,
                 c.nombres, c.direccion, c.cedula, c.celular, c.telefono, c.id_cliente, c.zona, c.vendedor as nombre_vendedor
