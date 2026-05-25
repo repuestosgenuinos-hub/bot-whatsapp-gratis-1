@@ -191,7 +191,10 @@ async function buscarCliente(rifLimpio) {
 async function buscarProductoPorTexto(texto) {
     const txtNormal = normalizar(texto);
     
-    // 1. Diccionario de Sinónimos (Crucial para que entienda "rolinera" como "rodamiento")
+    // 1. Categorización de palabras para asignar pesos
+    const positionalWords = ['superior', 'sup', 'inferior', 'inf', 'interno', 'int', 'externo', 'ext', 'derecha', 'der', 'delantera', 'trasera', 'izquierda', 'izq', 'rueda'];
+    const partWords = ['rolinera', 'rodamiento', 'estopera', 'sello', 'amortiguador', 'amort', 'pastilla', 'freno', 'disco', 'bomba', 'correa', 'filtro'];
+    
     const sinonimos = {
         'rolinera': ['rodamiento', 'rolinera'],
         'rolineras': ['rodamiento', 'rolinera'],
@@ -235,14 +238,8 @@ async function buscarProductoPorTexto(texto) {
 
     if (palabrasBase.length === 0) return null;
 
-    const positionalWords = ['superior', 'sup', 'inferior', 'inf', 'interno', 'int', 'externo', 'ext', 'derecha', 'der', 'izquierda', 'izq'];
-    const isOnlyPositional = palabrasBase.every(p => positionalWords.includes(p));
-    if (isOnlyPositional) return null;
-
     const expandirFormas = (pal) => {
-        // Si la palabra tiene sinónimos definidos, los usamos
         if (sinonimos[pal]) return sinonimos[pal];
-
         const f = [pal];
         if (pal.endsWith('es') && pal.length > 4) f.push(pal.slice(0, -2));
         if (pal.endsWith('s') && pal.length > 3 && !pal.endsWith('es')) f.push(pal.slice(0, -1));
@@ -255,38 +252,57 @@ async function buscarProductoPorTexto(texto) {
 
     const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
     
-    // --- LÓGICA DE PUNTUACIÓN (SCORING) ---
-    // Creamos una suma de CASE WHEN. Cada palabra que coincida suma 1 punto.
     let scoreSQL = "0";
     let queryParams = [];
+    let modelWordsFound = [];
 
     palabrasBase.forEach(pal => {
         const formas = expandirFormas(pal);
+        
+        // DETERMINAR EL PESO DE LA PALABRA
+        let peso = 1; // Default: Pieza (1 punto)
+        if (positionalWords.includes(pal)) {
+            peso = 5; // Posición (5 puntos)
+        } else if (!partWords.includes(pal)) {
+            peso = 10; // Es un Modelo/Marca (10 puntos)
+            modelWordsFound.push(pal);
+        }
+
         const conditions = formas.map(() => "descripcion LIKE ?").join(" OR ");
-        scoreSQL += ` + (CASE WHEN ${conditions} THEN 1 ELSE 0 END)`;
+        scoreSQL += ` + (CASE WHEN ${conditions} THEN ${peso} ELSE 0 END)`;
         formas.forEach(f => queryParams.push(`%${f}%`));
     });
 
     try {
-        // Seleccionamos el producto y calculamos su score.
-        // Ordenamos por score DESC para que el que coincida con MÁS palabras salga primero.
+        // FILTRO CRÍTICO: Si el usuario mencionó un modelo (ej. Fiesta), 
+        // obligamos a que la descripción contenga al menos una de esas palabras de modelo.
+        let modelFilter = "";
+        let modelParams = [];
+        if (modelWordsFound.length > 0) {
+            const modelConditions = [];
+            modelWordsFound.forEach(pal => {
+                const formas = expandirFormas(pal);
+                formas.forEach(f => {
+                    modelConditions.push("descripcion LIKE ?");
+                    modelParams.push(`%${f}%`);
+                });
+            });
+            modelFilter = ` AND (${modelConditions.join(" OR ")})`;
+        }
+
         const sql = `
             SELECT producto, descripcion, tipo, precio_final, (${scoreSQL}) as relevancia 
             FROM tab_productos 
-            WHERE ${stockCondition} 
+            WHERE ${stockCondition} ${modelFilter}
             HAVING relevancia > 0 
             ORDER BY relevancia DESC, descripcion ASC 
             LIMIT 8`;
             
-        const [rows] = await pool.execute(sql, queryParams);
+        const [rows] = await pool.execute(sql, [...queryParams, ...modelParams]);
         
-        if (rows.length > 0) {
-            // Si el mejor resultado tiene un score muy bajo comparado con las palabras buscadas, 
-            // podrías filtrar, pero aquí devolvemos los mejores matches.
-            return rows;
-        }
+        if (rows.length > 0) return rows;
     } catch (e) {
-        console.log("Error en búsqueda por Scoring:", e.message);
+        console.log("Error en búsqueda avanzada:", e.message);
     }
 
     return null;
