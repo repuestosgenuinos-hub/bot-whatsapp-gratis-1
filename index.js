@@ -1,3 +1,5 @@
+--- START OF FILE index_nuevo.js ---
+
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode');
@@ -172,12 +174,10 @@ async function buscarVendedor(jid, pushName) {
 
 function detectarIntencionMenu(texto) {
     if (!texto) return null;
-    // 1. Verificar si el usuario escribió solo el número (ej: "1", "2")
     if (/^\d$/.test(texto)) {
         const num = texto.charAt(0);
         if (MENU_INTENTIONS[num]) return MENU_INTENTIONS[num].response;
     }
-    // 2. Verificar frases completas para evitar falsos positivos
     for (const key in MENU_INTENTIONS) {
         const intention = MENU_INTENTIONS[key];
         if (intention.keywords.some(phrase => texto.includes(phrase))) {
@@ -302,12 +302,15 @@ async function buscarProductoPorTexto(texto) {
     let whereClause = "";
     let queryParams = [];
 
+    // Modificación: Ahora busca en producto, descripcion y equivalencia
     palabrasBase.forEach((pal, index) => {
         const formas = expandirFormas(pal);
-        const conditions = formas.map(() => "descripcion LIKE ?");
+        const conditions = formas.map(() => "(producto LIKE ? OR descripcion LIKE ? OR equivalencia LIKE ?)");
         whereClause += `(${conditions.join(" OR ")})`;
         if (index < palabrasBase.length - 1) whereClause += " AND ";
-        formas.forEach(f => queryParams.push(`%${f}%`));
+        formas.forEach(f => {
+            queryParams.push(`%${f}%`, `%${f}%`, `%${f}%`);
+        });
     });
 
     try {
@@ -323,12 +326,16 @@ async function buscarProductoPorTexto(texto) {
     if (palabrasBase.length >= 5) minRelevance = 3;
 
     const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
-    const orConditions = expandedTerms.map(() => "descripcion LIKE ?");
-    const orParams = expandedTerms.map(p => `%${p}%`);
+    // Modificación: Búsqueda OR expandida a los 3 campos
+    const orConditions = expandedTerms.map(() => "(producto LIKE ? OR descripcion LIKE ? OR equivalencia LIKE ?)");
+    const orParams = expandedTerms.flatMap(p => [`%${p}%`, `%${p}%`, `%${p}%`]);
 
     const relevanceParts = palabrasBase.map(p => {
         const formas = expandirFormas(p);
-        const cases = formas.map(f => `descripcion LIKE '%${f.replace(/[^a-z]/g, '')}%'`);
+        const cases = formas.map(f => {
+            const term = f.replace(/[^a-z]/g, '');
+            return `(producto LIKE '%${term}%' OR descripcion LIKE '%${term}%' OR equivalencia LIKE '%${term}%')`;
+        });
         return `(CASE WHEN ${cases.join(' OR ')} THEN 1 ELSE 0 END)`;
     });
     const relevanceSQL = relevanceParts.join(' + ');
