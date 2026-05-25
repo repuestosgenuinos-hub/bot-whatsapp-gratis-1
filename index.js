@@ -1,3 +1,5 @@
+--- START OF FILE index_nuevo.js ---
+
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode');
@@ -56,42 +58,42 @@ const MENU_TEXT = `📋 *MENÚ PRINCIPAL ONE4CARS*
 
 _Escriba el número de la opción o su consulta directamente._`;
 
-// ===== MAPA DE INTENCIONES DEL MENÚ (DETECCIÓN AMPLIA) =====
+// ===== MAPA DE INTENCIONES REFORMULADO (Para evitar falsos positivos) =====
 const MENU_INTENTIONS = {
     '1': {
-        keywords: ['pago', 'pagar', 'transferir', 'bancos', 'cuentas', 'movil', 'metodos', 'formas', 'datos de pago', 'pago movil'],
+        keywords: ['medios de pago', 'pago movil', 'datos de pago', 'como pagar', 'datos bancarios', 'cuentas para pagar'],
         response: `1️⃣ *Medios de pago:* https://www.one4cars.com/medios_de_pago.php/`
     },
     '2': {
-        keywords: ['saldo', 'cuenta', 'deuda', 'cuanto debo', 'estado', 'pendiente', 'facturas', 'estado de cuenta'],
+        keywords: ['estado de cuenta', 'cuanto debo', 'mi saldo', 'facturas pendientes', 'mi deuda', 'listado de facturas', 'cuentas por cobrar'],
         response: `2️⃣ *Estado de cuenta:* https://www.one4cars.com/estado_de_cuenta.php/`
     },
     '3': {
-        keywords: ['precios', 'catalogo', 'lista', 'cuanto cuesta', 'tarifas', 'precio de'],
+        keywords: ['lista de precios', 'catalogo de precios', 'cuanto cuestan', 'ver precios'],
         response: `3️⃣ *Lista de precios:* https://www.one4cars.com/lista_de_precios.php/`
     },
     '4': {
-        keywords: ['pedido', 'comprar', 'orden', 'hacer pedido', 'encargar', 'tomar pedido'],
+        keywords: ['tomar pedido', 'hacer un pedido', 'quiero comprar', 'realizar pedido'],
         response: `4️⃣ *Tomar pedido:* https://www.one4cars.com/tomar_pedido.php/`
     },
     '5': {
-        keywords: ['mis clientes', 'vendedores', 'mi equipo', 'lista de clientes', 'ver clientes'],
+        keywords: ['mis clientes', 'lista de vendedores', 'mis vendedores', 'ver mis clientes'],
         response: `5️⃣ *Mis clientes/Vendedores:* https://www.one4cars.com/mis_clientes.php/`
     },
     '6': {
-        keywords: ['afiliar', 'registrar', 'nuevo cliente', 'dar de alta', 'inscribir cliente'],
+        keywords: ['afiliar cliente', 'registrar cliente', 'dar de alta cliente', 'nuevo cliente'],
         response: `6️⃣ *Afiliar cliente:* https://www.one4cars.com/afiliar_clientes.php/`
     },
     '7': {
-        keywords: ['buscar producto', 'inventario', 'stock', 'disponibilidad', 'que tienen', 'consulta de productos'],
+        keywords: ['consulta de productos', 'buscar en inventario', 'ver disponibilidad', 'buscar repuesto'],
         response: `7️⃣ *Consulta de productos:* https://www.one4cars.com/consulta_productos.php/`
     },
     '8': {
-        keywords: ['despacho', 'envio', 'guia', 'rastrear', 'entrega', 'seguimiento', 'donde esta mi pedido'],
+        keywords: ['seguimiento despacho', 'donde esta mi pedido', 'estatus del envio', 'rastrear pedido'],
         response: `8️⃣ *Seguimiento Despacho:* https://www.one4cars.com/despacho.php/`
     },
     '9': {
-        keywords: ['humano', 'operador', 'persona', 'agente', 'ayuda', 'soporte', 'hablar con alguien', 'asesor'],
+        keywords: ['asesor humano', 'hablar con un operador', 'soporte humano', 'quiero hablar con alguien', 'ayuda de un operador'],
         response: `9️⃣ *Asesor Humano:* Indique su duda y un operador revisará el caso pronto. 👩‍💻`
     }
 };
@@ -170,9 +172,6 @@ async function buscarVendedor(jid, pushName) {
     return r[0] || null;
 }
 
-/**
- * DETECTA SI EL USUARIO QUIERE UNA OPCIÓN DEL MENÚ
- */
 function detectarIntencionMenu(texto) {
     if (!texto) return null;
     // 1. Verificar si el usuario escribió solo el número (ej: "1", "2")
@@ -180,10 +179,10 @@ function detectarIntencionMenu(texto) {
         const num = texto.charAt(0);
         if (MENU_INTENTIONS[num]) return MENU_INTENTIONS[num].response;
     }
-    // 2. Verificar si el texto contiene palabras clave
+    // 2. Verificar frases completas para evitar falsos positivos
     for (const key in MENU_INTENTIONS) {
         const intention = MENU_INTENTIONS[key];
-        if (intention.keywords.some(word => texto.includes(word))) {
+        if (intention.keywords.some(phrase => texto.includes(phrase))) {
             return intention.response;
         }
     }
@@ -248,9 +247,6 @@ async function buscarCliente(rifLimpio) {
     return r[0] || null;
 }
 
-/**
- * BÚSQUEDA DE PRODUCTOS OPTIMIZADA
- */
 async function buscarProductoPorTexto(texto) {
     const txtNormal = normalizar(texto);
     const stopWords = [
@@ -636,10 +632,9 @@ async function startBot() {
                 }
             }
 
-            // --- 2. DETECCIÓN INTELIGENTE DEL MENÚ (SINÓNIMOS E INTENCIONES) ---
+            // --- 2. DETECCIÓN INTELIGENTE DEL MENÚ ---
             const menuOption = detectarIntencionMenu(text);
             if (menuOption) {
-                // Caso especial: Si la intención es "Estado de Cuenta", ejecutar lógica de saldo
                 if (menuOption.includes('Estado de cuenta')) {
                     const targetID = sesion?.id_cliente_int;
                     if (!targetID) {
@@ -658,7 +653,6 @@ async function startBot() {
                     listado += `💰 *TOTAL A PAGAR: $${totalP.toFixed(2)}*`;
                     return await safeSendMessage(from, { text: listado });
                 }
-                // Para el resto de opciones, enviar el enlace/respuesta del mapa
                 return await safeSendMessage(from, { text: menuOption });
             }
 
