@@ -701,10 +701,10 @@ async function startBot() {
 let codigoABuscar = "";
 const palabras = rawText.split(/\s+/);
 
-// Ajuste: Limpiamos signos de puntuación de cada palabra antes de verificar si es un código
-// Se acepta cualquier palabra que tenga letras y números, o números largos (mínimo 3 caracteres)
+// Ajuste: Limpiamos los signos de puntuación de cada palabra antes de validar
 const posibleCodigo = palabras.find(p => {
     const limpia = p.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?!]/g, "");
+    // Validamos que el código tenga al menos 3 caracteres y contenga alfanuméricos
     return /^[A-Z0-9]{3,}$/i.test(limpia);
 });
 
@@ -712,15 +712,16 @@ if (posibleCodigo) {
     codigoABuscar = posibleCodigo.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?!]/g, "");
 }
 
+// Procesamiento de búsqueda
 if (codigoABuscar !== "" || (text !== 'menu' && !['hola', 'buen dia', 'buenos dias', 'buenas tardes'].includes(text))) {
     try {
-        // Si se encontró un código, buscamos por ese código exacto primero
         let prods = [];
+        // Intentamos búsqueda exacta por código si se extrajo uno
         if (codigoABuscar !== "") {
             prods = await buscarProductoPorCodigo(codigoABuscar);
         }
         
-        // Si no se encontró por código o no había código, buscamos por texto normal
+        // Si no se encuentra por código, realizamos búsqueda por texto
         if (!prods || prods.length === 0) {
             prods = await buscarProductoPorTexto(codigoABuscar !== "" ? codigoABuscar : rawText);
         }
@@ -732,6 +733,7 @@ if (codigoABuscar !== "" || (text !== 'menu' && !['hola', 'buen dia', 'buenos di
             await safeSendMessage(from, { text: "🔍 *Resultados de búsqueda en inventario:* 👇" });
             await sleep(1000);
 
+            // Envío de productos disponibles
             for (const p of conStock) {
                 if (!isBotReady()) break; 
                 const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
@@ -745,6 +747,7 @@ if (codigoABuscar !== "" || (text !== 'menu' && !['hola', 'buen dia', 'buenos di
                 await sleep(1500);
             }
 
+            // Envío de productos agotados
             for (const p of agotados) {
                 if (!isBotReady()) break;
                 const msgAgotado = `⚠️ *AVISO: PRODUCTO AGOTADO*\n\n📦 *CÓDIGO: ${p.producto}*\n📝 ${p.descripcion}\n\n_Este producto actualmente no tiene disponibilidad._`;
