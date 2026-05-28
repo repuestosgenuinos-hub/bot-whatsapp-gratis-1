@@ -609,7 +609,6 @@ async function startBot() {
 
             const text = normalizar(rawText);
             
-            // SE MODIFICÓ LA EXPRESIÓN REGULAR PARA EXIGIR V, J, G o E Y EVITAR FALSOS POSITIVOS CON NÚMEROS DE PRODUCTO.
             const textoLimpioParaRif = rawText.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
             const esRIFPuro = /^[VJGE]\d{8,9}$/.test(textoLimpioParaRif);
 
@@ -617,7 +616,7 @@ async function startBot() {
             const sesion = await getSesion(from);
             if (sesion && sesion.modo === 'humano' && !isAdmin) return;
 
-            // --- 1. LÓGICA DE RIF (ADMINISTRADORES O AVISO DE RESTRICCIÓN) ---
+            // --- 1. LÓGICA DE RIF (ADMINISTRADORES) ---
             if (esRIFPuro) {
                 if (isAdmin) {
                     const rifLimpio = limpiarRIF(rawText);
@@ -643,7 +642,6 @@ async function startBot() {
                         return await safeSendMessage(from, { text: "❌ No se encontró ningún cliente con ese RIF." });
                     }
                 } else {
-                    // SI ES USUARIO NORMAL Y ENVÍA UN RIF, SE LE INFORMA QUE ES EXCLUSIVO
                     return await safeSendMessage(from, { text: "❌ La consulta de estado de cuenta mediante RIF es una función exclusiva para administradores." });
                 }
             }
@@ -671,61 +669,60 @@ async function startBot() {
                 }
                 return await safeSendMessage(from, { text: menuOption });
             }
-         // ============================================================
-            // NUEVO: LÓGICA DE PAGO / ABONO (COLOCAR AQUÍ)
-            // ============================================================
+
+            // --- 3. LÓGICA DE PAGOS ---
             if (text === 'pago fact' || text === 'abono'  || text.includes('pago') || text.includes('al señor oscar') || text.includes('envié el pago') || text.includes('adjunto pago')) {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
                 const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nRecibido tu mensaje, administración validará su pago a la brevedad.\n\n${MENU_TEXT}`;
                 return await safeSendMessage(from, { text: saludoCordial });
             }
 
-                     // ============================================================
-            // NUEVO: (Factura Fiscal)
-            // ============================================================
-            if (text === 'pago fact' || text === 'factura fiscal'  || text.includes('factura con iva')  ) {
+            if (text === 'factura fiscal'  || text.includes('factura con iva')  ) {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
-                const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nLa Factura Fiscalk sera realizada de acuerdo con su solicitud el dia que tenga disponibilidad de hacer el pago.\n\n${MENU_TEXT}`;
+                const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nLa Factura Fiscal será realizada de acuerdo con su solicitud el día que tenga disponibilidad de hacer el pago.\n\n${MENU_TEXT}`;
                 return await safeSendMessage(from, { text: saludoCordial });
             }
-            // --- 3. LÓGICA DE DESPACHOS Y TIEMPOS ---
-            if (text.includes("cuando llega mi pedido") || 
-                text.includes("tiempo tardan en despachar") || 
-                text.includes("cuando me llega") || 
-                text.includes("tiempo de entrega") || 
-                text.includes("cuanto tarda el envio")) {
-                return await safeSendMessage(from, { text: "Saludos estimado cliente, su pedido esta disponible en un lapso no mayor de 24 horas" });
-            }
 
-            // --- 4. LÓGICA DE PRODUCTOS ---
+            // --- 4. LÓGICA DE PRODUCTOS MEJORADA ---
             if (text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
                 try {
-                    // SE AÑADIÓ LA BÚSQUEDA DIRECTA POR CÓDIGO
-                    let prods = await buscarProductoPorCodigo(rawText);
+                    let prods = null;
                     
+                    // NUEVO: BUSCAR CÓDIGO DENTRO DE LA FRASE
+                    const palabrasEnMensaje = rawText.split(/\s+/);
+                    for (const p of palabrasEnMensaje) {
+                        const codCandidato = p.replace(/[^a-zA-Z0-9]/g, ''); 
+                        if (codCandidato.length >= 4) { 
+                            prods = await buscarProductoPorCodigo(codCandidato);
+                            if (prods) break; 
+                        }
+                    }
+                    
+                    // Si no se encontró por código, buscar por texto (descripción)
                     if (!prods) {
                         prods = await buscarProductoPorTexto(rawText);
                     }
 
                     if (prods) {
                         const saludos = [
-                            "Saludos estimado , gracias por tu consulta puedo recomendarte estos artículos: 👇",
-                            "¡Hola! He buscado en nuestro inventario y creo que estos artículos es lo que buscas: 👇",
-                            "Con gusto le ayudo. Segun lo que me dices, aquí tienes la mejor opcion disponible: 👇",
-                            "Hola, un placer saludarle. He encontrado estos productos que coinciden con su búsqueda: 👇"
+                            "Saludos estimado, gracias por tu consulta. Aquí tienes la información solicitada: 👇",
+                            "¡Hola! He buscado en nuestro inventario y encontré esto: 👇",
+                            "Un placer saludarte. Según lo que me indicas, aquí tienes lo disponible: 👇"
                         ];
                         const saludoAzar = saludos[Math.floor(Math.random() * saludos.length)];
                         await safeSendMessage(from, { text: saludoAzar });
-                        await sleep(1500);
+                        await sleep(1000);
 
                         for (const p of prods) {
                             if (!isBotReady()) break; 
                             const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
                             
-                            // Lógica para estado de agotado
+                            // Lógica de agotado (mejorada con stock_total)
                             let infoStock = "";
                             if (parseFloat(p.stock_total || 0) <= 0) {
                                 infoStock = "\n❌ *AGOTADO (Próximo a llegar)*";
+                            } else {
+                                infoStock = "\n✅ *Disponible*";
                             }
                             
                             const caption = `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio Final: $${precioLimpio}*${infoStock}\n📝 ${p.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}`;
@@ -744,40 +741,27 @@ async function startBot() {
 
             // --- 5. COMANDOS DE ADMINISTRADOR ---
             if (isAdmin) {
-                // MODIFICACION: BUSCAR NOTA POR NUMERO (Ej: "nota 5947")
                 const notaMatch = text.match(/nota\s+(\d+)/);
                 if (notaMatch) {
                     const numNota = notaMatch[1];
                     const linkNota = `https://www.one4cars.com/uploads/notas/${numNota}.jpg`;
-                    const msgNota = `✍️ *Factura Firmada #${numNota}*\n\nPuede ver la imagen aquí:\n${linkNota}`;
-                    return await safeSendMessage(from, { text: msgNota });
+                    return await safeSendMessage(from, { text: `✍️ *Factura Firmada #${numNota}*\n\nPuede ver la imagen aquí:\n${linkNota}` });
                 }
 
                 if (text === 'dolar' || text === 'bcv' || text === 'paralelo' ) {
                     await actualizarDolar();
                     return await safeSendMessage(from, { text: `💵 BCV: ${dolarInfo.bcv}\n📈 Paralelo: ${dolarInfo.paralelo}` });
                 }
-                if (text === 'menu' || text === 'hola' || text === 'buen dia') {
-                    return await safeSendMessage(from, { text: `⭐ *MODO ADMINISTRADOR*\n\n${MENU_TEXT}` });
-                }
             }
 
             // --- 6. SALUDO Y MENÚ ---
             if (text === 'menu' || text === 'hola' || text === 'buen dia' || text === 'buenos dias') {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
-                const saludoCordial = `¡Hola *${nombreUsuario}*! Es un gusto saludarte. 😊\n\n¿En qué podemos ayudarte hoy? Por favor, indícanos qué servicio necesitas o consulta nuestro menú a continuación:\n\n${MENU_TEXT}`;
-                return await safeSendMessage(from, { text: saludoCordial });
-            }
-
-                        // --- 6. SALUDO Y MENÚ ---
-            if (text === 'Pago fact' || text === 'Abono' ) {
-                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
-                const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nrecibido tu mensaje, administracion validara su pago a la brevedad\n\n${MENU_TEXT}`;
-                return await safeSendMessage(from, { text: saludoCordial });
+                return await safeSendMessage(from, { text: `¡Hola *${nombreUsuario}*! Es un gusto saludarte. 😊\n\n¿En qué podemos ayudarte hoy? Indícanos qué servicio necesitas o consulta nuestro menú:\n\n${MENU_TEXT}` });
             }
             
             // --- 7. FALLBACK ---
-            const conversationalShorts = ['si', 'no', 'ok', 'vale', 'gracias', 'ya', 'entendido', 'está bien', 'bueno', 'dale', 'está ok', 'está bien', 'claro'];
+            const conversationalShorts = ['si', 'no', 'ok', 'vale', 'gracias', 'ya', 'entendido', 'bueno', 'dale', 'claro'];
             if (conversationalShorts.includes(text)) return; 
             if (rawText.length > 500) return;
 
@@ -786,7 +770,7 @@ async function startBot() {
     });
 }
 
-// ===== SERVIDOR HTTP =====
+// (SERVIDOR HTTP Y RESTO DEL CÓDIGO IDENTICO...)
 const server = http.createServer(async (req, res) => {
     const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const query = Object.fromEntries(parsedUrl.searchParams.entries());
