@@ -605,7 +605,6 @@ async function checkEstadisticasVendedores(force = false) {
             const porcMeta = meta > 0 ? ((ventaMes / meta) * 100).toFixed(2) : "0.00";
 
             // 4. Porcentaje por tipo de producto (Mes en curso)
-            // Se corrigió el JOIN para empatar tab_facturas.nro_factura con tab_facturas_reng.id_facturas
             const [rTipos] = await pool.execute(
                 `SELECT r.tipo, SUM(r.precio_total) as total_tipo 
                  FROM tab_facturas_reng r 
@@ -629,6 +628,30 @@ async function checkEstadisticasVendedores(force = false) {
                 });
             }
 
+            // 5. TOP MEJORES CLIENTES DEL VENDEDOR (Mes en curso)
+            const [rClientes] = await pool.execute(
+                `SELECT c.nombres, SUM(f.total) as total_cliente 
+                 FROM tab_facturas f 
+                 JOIN tab_clientes c ON f.id_cliente = c.id_cliente
+                 WHERE f.id_vendedor = ? AND f.anulado = 'no' AND f.fecha_reg >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+                 GROUP BY f.id_cliente, c.nombres 
+                 ORDER BY total_cliente DESC 
+                 LIMIT 3`,
+                [v.id_vendedor]
+            );
+
+            let clientesTexto = "";
+            if (rClientes.length === 0) {
+                clientesTexto = "🔹 _Sin transacciones registradas este mes._\n";
+            } else {
+                rClientes.forEach((row, index) => {
+                    clientesTexto += `👑 *${index + 1}. ${row.nombres.trim()}:* $${parseFloat(row.total_cliente).toFixed(2)}\n`;
+                });
+            }
+
+            // Mensaje de motivación enfocado en transformar visitas en ventas reales
+            const mensajeMotivacional = `💡 *REFLEXIÓN DE ÉXITO SEMANAL:*\nRecuerda que las únicas limitaciones verdaderas son las que tú permites que vivan en tu mente. No existen mercados difíciles ni metas inalcanzables cuando vas con determinación. Esta semana, haz que cada visita cuente: no salgas solo a saludar, sal con la convicción de conectar y transformar cada oportunidad en una venta cerrada. ¡Rompe tus propios récords y demuestra tu verdadero potencial! 💪🚀`;
+
             const msgEstadisticas = `📊 *REPORTE DE ESTADÍSTICAS DE VENTAS*\n\n` +
                 `Hola *${v.nombre}*, aquí tienes el resumen de tu rendimiento:\n\n` +
                 `📅 *Venta última semana:* $${ventaSemana.toFixed(2)}\n` +
@@ -636,7 +659,8 @@ async function checkEstadisticasVendedores(force = false) {
                 `🎯 *Meta asignada:* $${meta.toFixed(2)}\n` +
                 `🏁 *Cumplimiento de Meta:* ${porcMeta}%\n\n` +
                 `📦 *Ventas por Tipo de Producto (Mes):*\n${breakdownTexto}\n` +
-                `¡Excelente labor, sigamos sumando! 🚀`;
+                `🔝 *Tus 3 Mejores Clientes (Mes):*\n${clientesTexto}\n` +
+                `${mensajeMotivacional}`;
 
             await safeSendMessage(jid, { text: msgEstadisticas });
             await sleep(1500); // Pausa para evitar bloqueos del socket
@@ -773,7 +797,7 @@ async function startBot() {
                 if (menuOption.includes('Estado de cuenta')) {
                     const targetID = sesion?.id_cliente_int;
                     if (!targetID) {
-                        return await safeSendMessage(from, { text: "Para consultar su estado de cuenta, por favor envíe su *RIF* para identificarlo." });
+                        return await safeSendMessage(from, { text: "Para consulting su estado de cuenta, por favor envíe su *RIF* para identificarlo." });
                     }
                     const facturas = await obtenerDetalleFacturas(targetID);
                     if (facturas.length === 0) return await safeSendMessage(from, { text: "✅ No posee facturas pendientes." });
