@@ -426,9 +426,9 @@ async function checkNuevasFacturas() {
             const jid = formatWhatsApp(f.celular);
             if (!jid) continue;
             const fecha = new Date(f.fecha_reg).toISOString().split('T')[0];
-            let montoNotif = parseFloat(f.total);
+            let montoNotif = parseFloat(f.total) / (parseFloat(f.porcentaje) || 1);
             if (f.vendedor_nombre && f.vendedor_nombre.toUpperCase() === 'MANUEL FERRAZ') {
-                montoNotif = montoNotif / 0.80 / (parseFloat(f.porcentaje) || 1);
+                montoNotif = montoNotif / 0.80;
             }
             const msg = `🧾 *NUEVA FACTURA REGISTRADA*\n\nHola *${f.nombres}*, se ha registrado una nueva factura en nuestro sistema:\n\n🔹 *N°:* ${f.nro_factura}\n🔹 *Monto:* $${montoNotif.toFixed(2)}\n🔹 *Fecha:* ${fecha}\n\nPuede consultar su estado de cuenta en:\nhttps://www.one4cars.com/estado_de_cuenta.php/`;
             await safeSendMessage(jid, { text: msg });
