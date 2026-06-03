@@ -316,7 +316,8 @@ async function buscarProductoPorTexto(texto) {
         'voy', 'vas', 'va', 'vamos', 'van', 'iba', 'ibas', 'ibamos', 'iban',
         'llegando', 'pais', 'país', 'atento',
         'enviaras', 'existencia', 'existencias', 'enviar', 'enviame', 'mandame', 'mándame', 
-        'envíame', 'disponibilidad', 'ver', 'buscar', 'repuesto', 'repuestos', 'catalogo', 'catálogo'
+        'envíame', 'disponibilidad', 'ver', 'buscar', 'repuesto', 'repuestos', 'catalogo', 'catálogo',
+        'tendra', 'tendras', 'tendran', 'tendria', 'tendrias', 'tendrian', 'tendriamos','tendremos'
     ];
 
     const palabrasBase = txtNormal.split(' ')
@@ -361,8 +362,8 @@ async function buscarProductoPorTexto(texto) {
     }
 
     let minRelevance = palabrasBase.length;
-    if (palabrasBase.length >= 4) {
-        minRelevance = palabrasBase.length - 1;
+    if (palabrasBase.length >= 2) {
+        minRelevance = Math.max(1, palabrasBase.length - 1);
     }
 
     const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
@@ -389,6 +390,16 @@ async function buscarProductoPorTexto(texto) {
         if (rows.length > 0) return rows;
     } catch (e) {
         console.log("Error Intento 2:", e.message);
+    }
+
+    if (minRelevance > 1 && palabrasBase.length > 1) {
+        try {
+            const sqlCatchall = `SELECT producto, descripcion, tipo, precio_final, (cantidad_existencia + cantidad_existencia_almacen) as stock_total FROM tab_productos WHERE ${orConditions.join(" OR ")} HAVING (${relevanceSQL}) >= 1 ORDER BY ${relevanceSQL} DESC LIMIT 8`;
+            const [rows] = await pool.execute(sqlCatchall, [...orParams, 1]);
+            if (rows.length > 0) return rows;
+        } catch (e) {
+            console.log("Error Intento 3:", e.message);
+        }
     }
 
     return null;
@@ -954,17 +965,24 @@ async function startBot() {
             const lineas = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
             const itemsPedido = [];
             for (const linea of lineas) {
-                let match = linea.match(/^\s*([A-Za-z0-9]{3,})\s*[-=]?\s*(\d{1,4})\s*$/);
+                let match = linea.match(/^\s*([A-Za-z0-9]{3,})(?:\s+[-=]?\s*|[-=]\s*)(\d{1,4})\s*$/);
                 if (match) {
                     itemsPedido.push({ codigo: match[1].toUpperCase(), cantidad: parseInt(match[2]) });
                     continue;
                 }
-                match = linea.match(/^\s*(\d{1,4})\s*[-=]?\s*([A-Za-z0-9]{3,})\s*$/);
+                match = linea.match(/^\s*(\d{1,4})(?:\s+[-=]?\s*|[-=]\s*)([A-Za-z0-9]{3,})\s*$/);
                 if (match) {
                     itemsPedido.push({ codigo: match[2].toUpperCase(), cantidad: parseInt(match[1]) });
+                    continue;
+                }
+                match = linea.match(/^\s*([A-Za-z0-9]{3,})\s*$/);
+                if (match) {
+                    itemsPedido.push({ codigo: match[1].toUpperCase(), cantidad: 1 });
                 }
             }
-            if (itemsPedido.length >= 1) {
+            const tieneMultiplesItems = itemsPedido.length >= 2;
+            const tieneCantidadExplicita = itemsPedido.length === 1 && itemsPedido[0].cantidad !== 1;
+            if (tieneMultiplesItems || tieneCantidadExplicita) {
                 console.log(`[COTIZACION] Detectado pedido de ${itemsPedido.length} items de ${from}`);
                 let itemsOk = [];
                 let errores = [];
@@ -1123,20 +1141,25 @@ async function startBot() {
 
             // --- 7. SALUDO Y MENÚ ---
             const nombreUsuario = vendedor ? vendedor.nombre : pushName;
-            const diaWords = ['buen dia', 'buenos dias', 'buendia', 'buenosdias'];
-            const tardeWords = ['buenas tardes', 'buenastardes'];
-            const nocheWords = ['buenas noches', 'buenasnoches'];
-            if (text === 'menu') {
-                return await safeSendMessage(from, { text: `¡Hola *${nombreUsuario}*! Es un gusto saludarle. 🙌\n\n¿En qué podemos ayudarle hoy? Indíquenos qué servicio necesita o consulte nuestro menú:\n\n${MENU_TEXT}` });
-            }
-            if (text === 'hola' || diaWords.includes(text)) {
-                return await safeSendMessage(from, { text: `¡Buenos días, *${nombreUsuario}*! Dios le bendiga. Es un gusto tenerle por aquí. 🙏\n\n¿En qué podemos servirle el día de hoy? Aquí le ayudamos con mucho gusto.\n\n${MENU_TEXT}` });
-            }
-            if (tardeWords.includes(text)) {
-                return await safeSendMessage(from, { text: `¡Buenas tardes, *${nombreUsuario}*! Un placer saludarle. Que tenga una bendecida tarde. 😊\n\n¿Cómo podemos ayudarle? Quedamos atentos a su solicitud.\n\n${MENU_TEXT}` });
-            }
-            if (nocheWords.includes(text)) {
-                return await safeSendMessage(from, { text: `¡Buenas noches, *${nombreUsuario}*! Dios le bendiga. Que descanse. 🌙\n\n¿En qué podemos ayudarle? Quedamos a la orden.\n\n${MENU_TEXT}` });
+            const esSaludo = text === 'menu' || text.startsWith('menu ') ||
+                             text === 'hola' || text.startsWith('hola ') || text.startsWith('hola,') ||
+                             text.startsWith('buen dia ') || text === 'buen dia' ||
+                             text.startsWith('buenos dias ') || text === 'buenos dias' ||
+                             text.startsWith('buenas tardes ') || text === 'buenas tardes' ||
+                             text.startsWith('buenas noches ') || text === 'buenas noches';
+            if (esSaludo) {
+                const saludoBase = text.startsWith('buenas tardes') ? 'tarde' :
+                                   text.startsWith('buenas noches') ? 'noche' :
+                                   text.startsWith('buen') ? 'dia' : 'dia';
+                const respuestas = {
+                    'dia': `¡Buenos días, *${nombreUsuario}*! Dios le bendiga. Es un gusto tenerle por aquí. 🙏\n\n¿En qué podemos servirle el día de hoy? Aquí le ayudamos con mucho gusto.\n\n${MENU_TEXT}`,
+                    'tarde': `¡Buenas tardes, *${nombreUsuario}*! Un placer saludarle. Que tenga una bendecida tarde. 😊\n\n¿Cómo podemos ayudarle? Quedamos atentos a su solicitud.\n\n${MENU_TEXT}`,
+                    'noche': `¡Buenas noches, *${nombreUsuario}*! Dios le bendiga. Que descanse. 🌙\n\n¿En qué podemos ayudarle? Quedamos a la orden.\n\n${MENU_TEXT}`
+                };
+                if (text.startsWith('menu')) {
+                    return await safeSendMessage(from, { text: `¡Hola *${nombreUsuario}*! Es un gusto saludarle. 🙌\n\n¿En qué podemos ayudarle hoy? Indíquenos qué servicio necesita o consulte nuestro menú:\n\n${MENU_TEXT}` });
+                }
+                return await safeSendMessage(from, { text: respuestas[saludoBase] });
             }
             
             // --- 8. AGRADECIMIENTO ---
