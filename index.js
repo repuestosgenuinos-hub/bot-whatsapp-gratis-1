@@ -1045,7 +1045,9 @@ async function startBot() {
                         const jidParts = from.split('@');
                         const rawTel = jidParts[0].replace(/\D/g, '');
                         const isLid = jidParts[1] && jidParts[1].includes('lid');
-                        const tel = isLid || rawTel.length > 13 ? `LID:${rawTel}` : rawTel;
+                        const tel = (isLid || rawTel.length > 13)
+                            ? (data.vendedor?.celular_vendedor || `LID:${rawTel}`)
+                            : rawTel;
                         const tot = data.items.reduce((s, it) => s + it.precio * it.cantidad, 0);
                         await pool.execute("INSERT INTO tab_pedidos (nro_factura, fecha_reg, nombres, celular, total, id_vendedor, vendedor, celular_vendedor, pagada, anulado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'NO', 'no')",
                             [nro, hoy, data.pushName || 'Cliente', tel, tot, data.vendedor?.id_vendedor || 0, data.vendedor?.nombre || '', data.vendedor?.celular_vendedor || '']);
@@ -1053,8 +1055,8 @@ async function startBot() {
                         const idPed = pedido[0].id;
                         for (let i = 0; i < data.items.length; i++) {
                             const it = data.items[i];
-                            await pool.execute("INSERT INTO tab_pedidos_reng (id_factura, nro_reglon, cantidad, precio_unitario, precio_total, tipo, fecha_reg) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                                [idPed, i + 1, it.cantidad, it.precio, it.precio * it.cantidad, it.tipo || '', hoy]);
+                            await pool.execute("INSERT INTO tab_pedidos_reng (id_factura, nro_reglon, producto, cantidad, precio_unitario, precio_total, tipo, fecha_reg) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                [idPed, i + 1, it.codigo, it.cantidad, it.precio, it.precio * it.cantidad, it.tipo || '', hoy]);
                         }
                         const adminJids = ADMIN_IDS.map(id => formatWhatsApp(id)).filter(Boolean);
                         for (const aj of adminJids) {
